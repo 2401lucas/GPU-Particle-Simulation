@@ -5,7 +5,9 @@
 #include "D3D12Swapchain.h"
 
 SwapchainPresentResult D3D12Swapchain::Present(bool vsync) {
-    m_swapchain->Present(vsync ? 1 : 0, 0);
+    UINT flags = 0;
+    if (!vsync) flags |= DXGI_PRESENT_ALLOW_TEARING;
+    m_swapchain->Present(vsync ? 1 : 0, flags);
     m_frameIndex = m_swapchain->GetCurrentBackBufferIndex();
     return SwapchainPresentResult::Success;
 }

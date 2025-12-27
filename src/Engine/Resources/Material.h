@@ -16,35 +16,19 @@ struct MaterialProperties {
     float alphaCutoff = 0.5f;
 };
 
-class Material {
-public:
-    Material() {
-    }
+struct Material {
+    TextureHandle albedoTexture;
+    TextureHandle normalTexture;
+    TextureHandle metallicRoughnessTexture;
+    TextureHandle emissiveTexture;
+    MaterialProperties properties;
 
-    ~Material() {
-    }
+    // Cached bindless indices to reduce calls
+    uint32_t albedoBindlessIndex = 0;
+    uint32_t normalBindlessIndex = 0;
+    uint32_t metallicRoughnessBindlessIndex = 0;
+    uint32_t emissiveBindlessIndex = 0;
 
-    // Textures
-    void SetAlbedoTexture(TextureHandle texture) { m_albedoTexture = texture; }
-    void SetNormalTexture(TextureHandle texture) { m_normalTexture = texture; }
-    void SetMetallicRoughnessTexture(TextureHandle texture) { m_metallicRoughnessTexture = texture; }
-    void SetEmissiveTexture(TextureHandle texture) { m_emissiveTexture = texture; }
-
-    TextureHandle GetAlbedoTexture() const { return m_albedoTexture; }
-    TextureHandle GetNormalTexture() const { return m_normalTexture; }
-    TextureHandle GetMetallicRoughnessTexture() const { return m_metallicRoughnessTexture; }
-    TextureHandle GetEmissiveTexture() const { return m_emissiveTexture; }
-
-    // Properties
-    MaterialProperties &GetProperties() { return m_properties; }
-    const MaterialProperties &GetProperties() const { return m_properties; }
-
-private:
-    TextureHandle m_albedoTexture;
-    TextureHandle m_normalTexture;
-    TextureHandle m_metallicRoughnessTexture;
-    TextureHandle m_emissiveTexture;
-    MaterialProperties m_properties;
 };
 
 

@@ -12,13 +12,18 @@
 #include <thread>
 #include <mutex>
 #include <unordered_map>
+#include <glm/mat4x4.hpp>
 
 #include "Material.h"
 #include "Mesh.h"
+#include "MeshLoader.h"
 #include "ResourceHandle.h"
 #include "Core/EventSystem.h"
 #include "Rendering/RHI/Texture.h"
 #include "Rendering/RHI/Device.h"
+
+constexpr uint32_t MAX_VERTICES = 1000000;
+constexpr uint32_t MAX_INDICES = 1000000;
 
 enum ResourcePoolState {
     Unloaded, // Resource not loaded
@@ -41,7 +46,7 @@ public:
     };
 
     HandleType Add(const std::string &path, std::unique_ptr<ResourceType> resource) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         HandleType handle{
             .id = m_nextId++,
@@ -64,7 +69,7 @@ public:
     }
 
     HandleType CreatePlaceholder(const std::string &path) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         HandleType handle{
             .id = m_nextId++,
@@ -87,7 +92,7 @@ public:
     }
 
     void UpdatePlaceholder(HandleType handle, std::unique_ptr<ResourceType> resource) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it != m_resources.end() && it->second.generation == handle.generation) {
@@ -98,10 +103,10 @@ public:
     }
 
     ResourceType *Get(HandleType handle) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
-        if (it == m_resources.end() && it->second.generation != handle.generation && it->second.state !=
+        if (it == m_resources.end() || it->second.generation != handle.generation || it->second.state !=
             ResourcePoolState::Loaded) { return nullptr; }
 
         it->second.lastAccessTime = std::chrono::steady_clock::now();
@@ -109,7 +114,7 @@ public:
     }
 
     ResourcePoolState GetState(HandleType handle) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it == m_resources.end()) return ResourcePoolState::Unloaded;
@@ -119,7 +124,7 @@ public:
     }
 
     void Remove(HandleType handle) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it == m_resources.end()) { return; }
@@ -128,7 +133,7 @@ public:
     }
 
     HandleType FindByPath(const std::string &path) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_pathToId.find(path);
         if (it != m_pathToId.end()) {
@@ -144,7 +149,7 @@ public:
     }
 
     std::string GetPath(HandleType handle) const {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it != m_resources.end() && it->second.generation == handle.generation) {
@@ -154,7 +159,7 @@ public:
     }
 
     void AddRef(HandleType handle) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it != m_resources.end() && it->second.generation == handle.generation) {
@@ -163,7 +168,7 @@ public:
     }
 
     bool Release(HandleType handle) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         auto it = m_resources.find(handle.id);
         if (it != m_resources.end() && it->second.generation == handle.generation) {
@@ -176,7 +181,7 @@ public:
     }
 
     uint64_t GetTotalMemory() const {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         uint64_t total = 0;
         for (const auto &[id, entry]: m_resources) {
@@ -188,7 +193,7 @@ public:
     }
 
     std::vector<HandleType> GetLRUResources(uint64_t targetMemory) {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
 
         // Collect all loaded resources with timestamps
         std::vector<std::pair<std::chrono::steady_clock::time_point, HandleType> > candidates;
@@ -226,7 +231,7 @@ public:
     }
 
     void Clear() {
-        std::lock_guard<std::mutex> lock(m_mutex);
+        const std::lock_guard<std::mutex> lock(m_mutex);
         m_resources.clear();
         m_pathToId.clear();
     }
@@ -249,7 +254,6 @@ public:
 
     ResourceManager &operator=(const ResourceManager &) = delete;
 
-
     // Resource State Queries
     ResourcePoolState GetResourceState(MeshHandle);
 
@@ -260,11 +264,14 @@ public:
     bool IsLoaded(TextureHandle);
 
     // Resource Creation
-    MeshHandle LoadMesh(const std::string &path);
 
-    TextureHandle LoadTexture(const std::string &path);
+    ///<param name="loadMaterial"> Automatically loads a meshes associated material if one exists</param>
+    std::vector<MeshHandle> LoadMesh(const std::string &path, bool loadMaterial = true);
 
-    MaterialHandle LoadMaterial(const std::string &path);
+    // Force Texture requires the returned texture handle to be valid by returning a default texture if no texture is found
+    TextureHandle LoadTexture(const std::string &path, bool forceTexture = false);
+
+    MaterialHandle LoadMaterial(const MaterialData &mat);
 
     PipelineHandle LoadPipeline(const PipelineCreateInfo &info);
 
@@ -313,9 +320,31 @@ public:
 
     void Update();
 
+    struct MeshRenderBuffers {
+        uint32_t numBuffers;
+        Buffer *position;
+        Buffer *normal;
+        Buffer *texCoord;
+        Buffer *tangent;
+        Buffer *index;
+    };
+
+    MeshRenderBuffers GetRenderBuffers() {
+        return {
+            1,
+            m_vPositionBuf.get(),
+            m_vNormalBuf.get(),
+            m_vTexCoordBuf.get(),
+            m_vTangentBuf.get(),
+            m_vIndexBuf.get()
+        };
+    }
+
 private:
     Device *m_device;
     EventSystem *m_eventSystem;
+
+    EventHandle m__onTransformUpdated;
 
     // Resource Pools
     ResourcePool<Mesh, MeshHandle> m_meshPool;
@@ -325,20 +354,26 @@ private:
 
     TextureHandle m_defaultTextureHandle;
 
-    // Async Loading
-    std::queue<std::function<void()> > loadingQueue;
-    std::queue<std::function<void()> > uploadQueue;
-    std::mutex queueMutex;
-    std::thread loadingThread;
-    bool stopLoading = false;
+    uint32_t m_currentVertexOffset = 0;
+    uint32_t m_currentIndexOffset = 0;
+
+    std::unique_ptr<Buffer> m_vPositionBuf;
+    std::unique_ptr<Buffer> m_vNormalBuf;
+    std::unique_ptr<Buffer> m_vTexCoordBuf;
+    std::unique_ptr<Buffer> m_vTangentBuf;
+    std::unique_ptr<Buffer> m_vIndexBuf;
 
     // Hot reloading
     bool hotReloadEnabled = false;
     std::unordered_map<std::string, std::filesystem::file_time_type> fileTimestamps;
 
     // Memory
-    uint64_t m_gpuMemorySize = 0; // TODO: Get from RendererDevice
+    uint64_t m_gpuMemorySize = 0;
     uint64_t m_gpuMemoryUsed = 0;
+
+    void CreateDefaultTexture();
+
+    void CreateVertexBuffers();
 };
 
 

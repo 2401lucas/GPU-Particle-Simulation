@@ -142,8 +142,6 @@ private:
     uint64_t m_nextHandleId = 1;
 };
 
-// Define common events used across the engine here
-
 namespace Events {
     // Application lifecycle
     constexpr const char *APP_INITIALIZED = "app_initialized";
@@ -156,16 +154,12 @@ namespace Events {
     constexpr const char *FRAME_END = "frame_end";
     constexpr const char *EFFECT_SPAWN = "effect_spawn";
 
-    // Input
-    constexpr const char *KEY_PRESSED = "key_pressed";
-    constexpr const char *KEY_RELEASED = "key_released";
-    constexpr const char *MOUSE_MOVED = "mouse_moved";
-    constexpr const char *MOUSE_CLICKED = "mouse_clicked";
-
     // Gameplay
     constexpr const char *ENTITY_SPAWNED = "entity_spawned";
     constexpr const char *ENTITY_DESTROYED = "entity_destroyed";
     constexpr const char *COLLISION_OCCURRED = "collision_occurred";
+
+    constexpr const char *TRANSFORM_UPDATED = "transform_updated";
 }
 
 #endif //GPU_PARTICLE_SIM_EVENTSYSTEM_H

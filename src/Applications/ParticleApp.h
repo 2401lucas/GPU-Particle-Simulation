@@ -15,9 +15,6 @@
 #include <vector>
 
 
-// Forward declarations
-class ParticleSystem;
-
 class ParticleApp : public Application {
 public:
     ParticleApp() {
@@ -44,7 +41,7 @@ public:
     // Configuration
     const char *GetWindowTitle() const override { return "GPU Particle Simulation"; }
     bool GetStartFullscreen() const override { return false; }
-    bool GetVSyncEnabled() const override { return true; }
+    bool GetVSyncEnabled() const override { return false; }
 
 private:
     // Application settings
@@ -52,14 +49,13 @@ private:
     bool m_showDebugInfo = false;
     float m_timeScale = 1.0f;
 
-    struct Entity {
-        MeshHandle meshHandle;
-        MaterialHandle materialHandle;
-        Transform transform;
-    } entity;
+    Scene scene;
 
     std::unique_ptr<Camera> m_camera;
     float m_speed = 1.0f;
+
+    EntityHandle demoCubeL;
+    EntityHandle demoCubeR;
 };
 
 

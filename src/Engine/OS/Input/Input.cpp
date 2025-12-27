@@ -7,951 +7,951 @@
 
 // Static registry for InputManager instances (to handle scroll/char callbacks)
 namespace {
-std::unordered_map<GLFWwindow*, InputManager*> g_InputManagers;
-std::mutex g_RegistryMutex;
+    std::unordered_map<GLFWwindow *, InputManager *> g_InputManagers;
+    std::mutex g_RegistryMutex;
 
-// RAII helper for exception-safe registration
-struct RegistryGuard {
-  GLFWwindow* window;
-  InputManager* manager;
-  bool registered = false;
+    // RAII helper for exception-safe registration
+    struct RegistryGuard {
+        GLFWwindow *window;
+        InputManager *manager;
+        bool registered = false;
 
-  RegistryGuard(GLFWwindow* w, InputManager* m) : window(w), manager(m) {
-    std::lock_guard<std::mutex> lock(g_RegistryMutex);
-    g_InputManagers[window] = manager;
-    registered = true;
-  }
+        RegistryGuard(GLFWwindow *w, InputManager *m) : window(w), manager(m) {
+            std::lock_guard<std::mutex> lock(g_RegistryMutex);
+            g_InputManagers[window] = manager;
+            registered = true;
+        }
 
-  ~RegistryGuard() {
-    if (registered) {
-      std::lock_guard<std::mutex> lock(g_RegistryMutex);
-      g_InputManagers.erase(window);
+        ~RegistryGuard() {
+            if (registered) {
+                std::lock_guard<std::mutex> lock(g_RegistryMutex);
+                g_InputManagers.erase(window);
+            }
+        }
+
+        void release() { registered = false; }
+    };
+} // namespace
+
+InputManager::InputManager(Window *window) : m_window(window) {
+    if (!m_window) {
+        throw std::runtime_error("InputManager requires a valid Window pointer");
     }
-  }
 
-  void release() { registered = false; }
-};
-}  // namespace
+    // Initialize mouse position
+    double mx, my;
+    glfwGetCursorPos(m_window->GetHandle(), &mx, &my);
+    m_mousePos = glm::vec2(static_cast<float>(mx), static_cast<float>(my));
+    m_prevMousePos = m_mousePos;
 
-InputManager::InputManager(Window* window) : m_Window(window) {
-  if (!m_Window) {
-    throw std::runtime_error("InputManager requires a valid Window pointer");
-  }
+    // Initialize gamepad states (up to 4 gamepads)
+    m_gamepadStates.resize(4);
 
-  // Initialize mouse position
-  double mx, my;
-  glfwGetCursorPos(m_Window->getHandle(), &mx, &my);
-  m_MousePos = glm::vec2(static_cast<float>(mx), static_cast<float>(my));
-  m_PrevMousePos = m_MousePos;
+    // Exception-safe registration
+    RegistryGuard guard(m_window->GetHandle(), this);
 
-  // Initialize gamepad states (up to 4 gamepads)
-  m_GamepadStates.resize(4);
+    // Register callbacks via Window's callback system
+    m_window->SetKeyCallback([this](int key, int scancode, int action, int mods) {
+        OnKey(key, scancode, action, mods);
+    });
 
-  // Exception-safe registration
-  RegistryGuard guard(m_Window->getHandle(), this);
+    m_window->SetMouseButtonCallback([this](int button, int action, int mods) {
+        OnMouseButton(button, action, mods);
+    });
 
-  // Register callbacks via Window's callback system
-  // Note: Capturing 'this' is safe because callbacks won't fire until after
-  // construction
-  m_Window->setKeyCallback([this](int key, int scancode, int action, int mods) {
-    onKey(key, scancode, action, mods);
-  });
+    m_window->SetCursorPosCallback(
+        [this](double x, double y) { OnCursorPos(x, y); });
 
-  m_Window->setMouseButtonCallback([this](int button, int action, int mods) {
-    onMouseButton(button, action, mods);
-  });
+    // Set scroll and char callbacks directly
+    glfwSetScrollCallback(m_window->GetHandle(),
+                          [](GLFWwindow *wnd, double x, double y) {
+                              std::lock_guard<std::mutex> lock(g_RegistryMutex);
+                              auto it = g_InputManagers.find(wnd);
+                              if (it != g_InputManagers.end()) {
+                                  it->second->OnScroll(x, y);
+                              }
+                          });
 
-  m_Window->setCursorPosCallback(
-      [this](double x, double y) { onCursorPos(x, y); });
-
-  // Set scroll and char callbacks directly
-  glfwSetScrollCallback(m_Window->getHandle(),
-                        [](GLFWwindow* wnd, double x, double y) {
-                          std::lock_guard<std::mutex> lock(g_RegistryMutex);
-                          auto it = g_InputManagers.find(wnd);
-                          if (it != g_InputManagers.end()) {
-                            it->second->onScroll(x, y);
-                          }
+    glfwSetCharCallback(m_window->GetHandle(),
+                        [](GLFWwindow *wnd, unsigned int codepoint) {
+                            std::lock_guard<std::mutex> lock(g_RegistryMutex);
+                            auto it = g_InputManagers.find(wnd);
+                            if (it != g_InputManagers.end()) {
+                                it->second->OnCharInput(codepoint);
+                            }
                         });
 
-  glfwSetCharCallback(m_Window->getHandle(),
-                      [](GLFWwindow* wnd, unsigned int codepoint) {
-                        std::lock_guard<std::mutex> lock(g_RegistryMutex);
-                        auto it = g_InputManagers.find(wnd);
-                        if (it != g_InputManagers.end()) {
-                          it->second->onCharInput(codepoint);
-                        }
-                      });
-
-  guard.release();  // Successfully constructed, keep registration
+    guard.release(); // Successfully constructed, keep registration
 }
 
 InputManager::~InputManager() {
-  // Unregister from global map
-  {
-    std::lock_guard<std::mutex> lock(g_RegistryMutex);
-    g_InputManagers.erase(m_Window->getHandle());
-  }
+    // Unregister from global map
+    {
+        std::lock_guard<std::mutex> lock(g_RegistryMutex);
+        g_InputManagers.erase(m_window->GetHandle());
+    }
 
-  // Clear Window callbacks
-  if (m_Window && m_Window->getHandle()) {
-    m_Window->setKeyCallback(nullptr);
-    m_Window->setMouseButtonCallback(nullptr);
-    m_Window->setCursorPosCallback(nullptr);
-    glfwSetScrollCallback(m_Window->getHandle(), nullptr);
-    glfwSetCharCallback(m_Window->getHandle(), nullptr);
-  }
+    // Clear Window callbacks
+    if (m_window && m_window->GetHandle()) {
+        m_window->SetKeyCallback(nullptr);
+        m_window->SetMouseButtonCallback(nullptr);
+        m_window->SetCursorPosCallback(nullptr);
+        glfwSetScrollCallback(m_window->GetHandle(), nullptr);
+        glfwSetCharCallback(m_window->GetHandle(), nullptr);
+    }
 }
 
 void InputManager::Update() {
-  if (!m_Window) return;
+    if (!m_window) return;
 
-  std::lock_guard<std::mutex> lock(m_Mutex);
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  updateGamepads();
+    UpdateGamepads();
 
-  // Mouse position is updated via onCursorPos callback
-  // Store previous position for next frame's delta calculation
-  m_PrevMousePos = m_MousePos;
+    // Mouse position is updated via onCursorPos callback
+    // Store previous position for next frame's delta calculation
+    m_mouseDelta = (m_prevMousePos - m_mousePos) * m_mouseSensitivity;
+    m_prevMousePos = m_mousePos;
 
-  // Reset wheel delta after frame
-  m_WheelDelta = 0.0;
+    // Reset wheel delta after frame
+    m_wheelDelta = 0.0;
 }
 
-void InputManager::updateGamepads() {
-  double now = getTime();
+void InputManager::UpdateGamepads() {
+    double now = GetTime();
 
-  for (int i = 0; i < 4; ++i) {
-    auto& state = m_GamepadStates[i];
-    bool wasConnected = state.connected;
+    for (int i = 0; i < 4; ++i) {
+        auto &state = m_gamepadStates[i];
+        bool wasConnected = state.connected;
 
-    // Check connection
-    int present = glfwJoystickPresent(GLFW_JOYSTICK_1 + i);
-    state.connected = (present == GLFW_TRUE);
+        // Check connection
+        int present = glfwJoystickPresent(GLFW_JOYSTICK_1 + i);
+        state.connected = (present == GLFW_TRUE);
 
-    // Fire connection/disconnection events
-    if (state.connected && !wasConnected) {
-      pushEvent(InputEvent::GamepadConnected(i, now));
-    } else if (!state.connected && wasConnected) {
-      pushEvent(InputEvent::GamepadDisconnected(i, now));
-    }
+        // Fire connection/disconnection events
+        if (state.connected && !wasConnected) {
+            PushEvent(InputEvent::GamepadConnected(i, now));
+        } else if (!state.connected && wasConnected) {
+            PushEvent(InputEvent::GamepadDisconnected(i, now));
+        }
 
-    if (!state.connected) {
-      state.axes.assign(6, 0.0f);
-      state.buttons.assign(15, false);
-      state.prevButtons.assign(15, false);
-      continue;
-    }
+        if (!state.connected) {
+            state.axes.assign(6, 0.0f);
+            state.buttons.assign(15, false);
+            state.prevButtons.assign(15, false);
+            continue;
+        }
 
-    // Get gamepad name
-    const char* name = glfwGetJoystickName(GLFW_JOYSTICK_1 + i);
-    if (name) {
-      state.name = std::string(name);
-    }
+        // Get gamepad name
+        const char *name = glfwGetJoystickName(GLFW_JOYSTICK_1 + i);
+        if (name) {
+            state.name = std::string(name);
+        }
 
-    // Check if gamepad supports standard mapping
-    int isGamepad = glfwJoystickIsGamepad(GLFW_JOYSTICK_1 + i);
-    if (isGamepad != GLFW_TRUE) continue;
+        // Check if gamepad supports standard mapping
+        int isGamepad = glfwJoystickIsGamepad(GLFW_JOYSTICK_1 + i);
+        if (isGamepad != GLFW_TRUE) continue;
 
-    // Get gamepad state
-    GLFWgamepadstate glfwState;
-    if (glfwGetGamepadState(GLFW_JOYSTICK_1 + i, &glfwState) == GLFW_TRUE) {
-      // Update axes
-      state.axes[static_cast<int>(GamepadAxis::LeftX)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_X];
-      state.axes[static_cast<int>(GamepadAxis::LeftY)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_Y];
-      state.axes[static_cast<int>(GamepadAxis::RightX)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_X];
-      state.axes[static_cast<int>(GamepadAxis::RightY)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y];
-      state.axes[static_cast<int>(GamepadAxis::LeftTrigger)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER];
-      state.axes[static_cast<int>(GamepadAxis::RightTrigger)] =
-          glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER];
+        // Get gamepad state
+        GLFWgamepadstate glfwState;
+        if (glfwGetGamepadState(GLFW_JOYSTICK_1 + i, &glfwState) == GLFW_TRUE) {
+            // Update axes
+            state.axes[static_cast<int>(GamepadAxis::LeftX)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_X];
+            state.axes[static_cast<int>(GamepadAxis::LeftY)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_Y];
+            state.axes[static_cast<int>(GamepadAxis::RightX)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_X];
+            state.axes[static_cast<int>(GamepadAxis::RightY)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_Y];
+            state.axes[static_cast<int>(GamepadAxis::LeftTrigger)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER];
+            state.axes[static_cast<int>(GamepadAxis::RightTrigger)] =
+                    glfwState.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER];
 
-      // Update buttons
-      state.prevButtons = state.buttons;
-      for (int btn = 0; btn < 15; ++btn) {
-        bool nowDown = (glfwState.buttons[btn] == GLFW_PRESS);
-        bool wasDown = state.buttons[btn];
-        state.buttons[btn] = nowDown;
+            // Update buttons
+            state.prevButtons = state.buttons;
+            for (int btn = 0; btn < 15; ++btn) {
+                bool nowDown = (glfwState.buttons[btn] == GLFW_PRESS);
+                bool wasDown = state.buttons[btn];
+                state.buttons[btn] = nowDown;
 
-        InputBinding binding{InputSource::Gamepad, btn, i};
-        updateButtonState(binding, nowDown);
+                InputBinding binding{InputSource::Gamepad, btn, i};
+                UpdateButtonState(binding, nowDown);
 
-        // Trigger action events for this button
-        if (nowDown && !wasDown) {
-          // Button was just pressed
-          for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-            for (const auto& b : actionBinding.bindings) {
-              if (b == binding) {
-                triggerActionPressed(actionName);
-                break;
-              }
+                // Trigger action events for this button
+                if (nowDown && !wasDown) {
+                    // Button was just pressed
+                    for (const auto &[actionName, actionBinding]: m_actionBindings) {
+                        for (const auto &b: actionBinding.bindings) {
+                            if (b == binding) {
+                                TriggerActionPressed(actionName);
+                                break;
+                            }
+                        }
+                    }
+                } else if (!nowDown && wasDown) {
+                    // Button was just released
+                    for (const auto &[actionName, actionBinding]: m_actionBindings) {
+                        for (const auto &b: actionBinding.bindings) {
+                            if (b == binding) {
+                                TriggerActionReleased(actionName);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
-          }
-        } else if (!nowDown && wasDown) {
-          // Button was just released
-          for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-            for (const auto& b : actionBinding.bindings) {
-              if (b == binding) {
-                triggerActionReleased(actionName);
+        }
+    }
+}
+
+void InputManager::ProcessEvents() {
+    // Move events out of queue (minimal lock time)
+    std::deque<InputEvent> events;
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        events = std::move(m_eventQueue);
+        m_eventQueue.clear();
+    }
+
+    // Process events WITHOUT holding any locks (safe for callbacks to call
+    // InputManager methods)
+    for (const auto &event: events) {
+        switch (event.type) {
+            case InputEventType::ActionPressed:
+                if (m_actionPressedCallback) {
+                    m_actionPressedCallback(event.actionOrAxisName);
+                }
                 break;
-              }
+
+            case InputEventType::ActionReleased:
+                if (m_actionReleasedCallback) {
+                    m_actionReleasedCallback(event.actionOrAxisName);
+                }
+                break;
+
+            case InputEventType::AxisChanged:
+                if (m_axisChangedCallback) {
+                    m_axisChangedCallback(event.actionOrAxisName, event.value);
+                }
+                break;
+
+            case InputEventType::GamepadConnected:
+                if (m_gamepadConnectedCallback) {
+                    m_gamepadConnectedCallback(event.gamepadIndex);
+                }
+                break;
+
+            case InputEventType::GamepadDisconnected:
+                if (m_gamepadDisconnectedCallback) {
+                    m_gamepadDisconnectedCallback(event.gamepadIndex);
+                }
+                break;
+
+            case InputEventType::TextInput:
+                if (m_textInputCallback) {
+                    m_textInputCallback(event.codepoint);
+                }
+                break;
+        }
+    }
+}
+
+void InputManager::PushEvent(InputEvent event) {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+
+    // Prevent queue overflow
+    if (m_eventQueue.size() >= m_maxQueueSize) {
+        // Drop oldest event
+        m_eventQueue.pop_front();
+    }
+
+    m_eventQueue.push_back(std::move(event));
+}
+
+void InputManager::TriggerActionPressed(const std::string &actionName) {
+    if (m_callbackMode == CallbackMode::Immediate) {
+        if (m_actionPressedCallback) {
+            m_actionPressedCallback(actionName);
+        }
+    } else {
+        PushEvent(InputEvent::ActionPressed(actionName, GetTime()));
+    }
+}
+
+void InputManager::TriggerActionReleased(const std::string &actionName) {
+    if (m_callbackMode == CallbackMode::Immediate) {
+        if (m_actionReleasedCallback) {
+            m_actionReleasedCallback(actionName);
+        }
+    } else {
+        PushEvent(InputEvent::ActionReleased(actionName, GetTime()));
+    }
+}
+
+void InputManager::UpdateButtonState(const InputBinding &binding, bool isDown) {
+    auto &state = m_inputStates[binding];
+    state.prevDown = state.down;
+
+    if (isDown != state.down) {
+        state.down = isDown;
+        state.lastChangeTime = GetTime();
+        state.consumed = false;
+    }
+}
+
+bool InputManager::IsBindingDown(const InputBinding &binding) const {
+    switch (binding.source) {
+        case InputSource::Keyboard:
+            return glfwGetKey(m_window->GetHandle(), binding.code) == GLFW_PRESS;
+
+        case InputSource::Mouse:
+            return glfwGetMouseButton(m_window->GetHandle(), binding.code) ==
+                   GLFW_PRESS;
+
+        case InputSource::Gamepad:
+            if (binding.gamepadIndex < 0 || binding.gamepadIndex >= 4) return false;
+            {
+                const auto &state = m_gamepadStates[binding.gamepadIndex];
+                if (!state.connected || binding.code < 0 || binding.code >= 15)
+                    return false;
+                return state.buttons[binding.code];
             }
-          }
-        }
-      }
+
+        default:
+            return false;
     }
-  }
 }
 
-void InputManager::processEvents() {
-  // Move events out of queue (minimal lock time)
-  std::deque<InputEvent> events;
-  {
-    std::lock_guard<std::mutex> lock(m_QueueMutex);
-    events = std::move(m_EventQueue);
-    m_EventQueue.clear();
-  }
+bool InputManager::WasBindingPressed(const InputBinding &binding) const {
+    auto it = m_inputStates.find(binding);
+    if (it == m_inputStates.end()) return false;
 
-  // Process events WITHOUT holding any locks (safe for callbacks to call
-  // InputManager methods)
-  for (const auto& event : events) {
-    switch (event.type) {
-      case InputEventType::ActionPressed:
-        if (m_ActionPressedCallback) {
-          m_ActionPressedCallback(event.actionOrAxisName);
-        }
-        break;
-
-      case InputEventType::ActionReleased:
-        if (m_ActionReleasedCallback) {
-          m_ActionReleasedCallback(event.actionOrAxisName);
-        }
-        break;
-
-      case InputEventType::AxisChanged:
-        if (m_AxisChangedCallback) {
-          m_AxisChangedCallback(event.actionOrAxisName, event.value);
-        }
-        break;
-
-      case InputEventType::GamepadConnected:
-        if (m_GamepadConnectedCallback) {
-          m_GamepadConnectedCallback(event.gamepadIndex);
-        }
-        break;
-
-      case InputEventType::GamepadDisconnected:
-        if (m_GamepadDisconnectedCallback) {
-          m_GamepadDisconnectedCallback(event.gamepadIndex);
-        }
-        break;
-
-      case InputEventType::TextInput:
-        if (m_TextInputCallback) {
-          m_TextInputCallback(event.codepoint);
-        }
-        break;
-    }
-  }
+    const auto &state = it->second;
+    return !state.prevDown && state.down;
 }
 
-void InputManager::pushEvent(InputEvent event) {
-  std::lock_guard<std::mutex> lock(m_QueueMutex);
+bool InputManager::WasBindingReleased(const InputBinding &binding) const {
+    auto it = m_inputStates.find(binding);
+    if (it == m_inputStates.end()) return false;
 
-  // Prevent queue overflow
-  if (m_EventQueue.size() >= m_MaxQueueSize) {
-    // Drop oldest event
-    m_EventQueue.pop_front();
-  }
-
-  m_EventQueue.push_back(std::move(event));
+    const auto &state = it->second;
+    return state.prevDown && !state.down;
 }
 
-void InputManager::triggerActionPressed(const std::string& actionName) {
-  if (m_CallbackMode == CallbackMode::Immediate) {
-    if (m_ActionPressedCallback) {
-      m_ActionPressedCallback(actionName);
-    }
-  } else {
-    pushEvent(InputEvent::ActionPressed(actionName, getTime()));
-  }
-}
+float InputManager::ApplyDeadzone(float value, float deadzone) const {
+    if (std::abs(value) < deadzone) return 0.0f;
 
-void InputManager::triggerActionReleased(const std::string& actionName) {
-  if (m_CallbackMode == CallbackMode::Immediate) {
-    if (m_ActionReleasedCallback) {
-      m_ActionReleasedCallback(actionName);
-    }
-  } else {
-    pushEvent(InputEvent::ActionReleased(actionName, getTime()));
-  }
-}
-
-void InputManager::updateButtonState(const InputBinding& binding, bool isDown) {
-  auto& state = m_InputStates[binding];
-  state.prevDown = state.down;
-
-  if (isDown != state.down) {
-    state.down = isDown;
-    state.lastChangeTime = getTime();
-    state.consumed = false;
-  }
-}
-
-bool InputManager::isBindingDown(const InputBinding& binding) const {
-  switch (binding.source) {
-    case InputSource::Keyboard:
-      return glfwGetKey(m_Window->getHandle(), binding.code) == GLFW_PRESS;
-
-    case InputSource::Mouse:
-      return glfwGetMouseButton(m_Window->getHandle(), binding.code) ==
-             GLFW_PRESS;
-
-    case InputSource::Gamepad:
-      if (binding.gamepadIndex < 0 || binding.gamepadIndex >= 4) return false;
-      {
-        const auto& state = m_GamepadStates[binding.gamepadIndex];
-        if (!state.connected || binding.code < 0 || binding.code >= 15)
-          return false;
-        return state.buttons[binding.code];
-      }
-
-    default:
-      return false;
-  }
-}
-
-bool InputManager::wasBindingPressed(const InputBinding& binding) const {
-  auto it = m_InputStates.find(binding);
-  if (it == m_InputStates.end()) return false;
-
-  const auto& state = it->second;
-  return !state.prevDown && state.down;
-}
-
-bool InputManager::wasBindingReleased(const InputBinding& binding) const {
-  auto it = m_InputStates.find(binding);
-  if (it == m_InputStates.end()) return false;
-
-  const auto& state = it->second;
-  return state.prevDown && !state.down;
-}
-
-float InputManager::applyDeadzone(float value, float deadzone) const {
-  if (std::abs(value) < deadzone) return 0.0f;
-
-  // Rescale from [deadzone, 1.0] to [0.0, 1.0]
-  float sign = (value > 0.0f) ? 1.0f : -1.0f;
-  float magnitude = std::abs(value);
-  return sign * ((magnitude - deadzone) / (1.0f - deadzone));
+    // Rescale from [deadzone, 1.0] to [0.0, 1.0]
+    float sign = (value > 0.0f) ? 1.0f : -1.0f;
+    float magnitude = std::abs(value);
+    return sign * ((magnitude - deadzone) / (1.0f - deadzone));
 }
 
 // --- Action API ---
 
-void InputManager::registerAction(const std::string& actionName,
-                                  const InputBinding& binding) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+void InputManager::RegisterAction(const std::string &actionName,
+                                  const InputBinding &binding) {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  ActionBinding action;
-  action.name = actionName;
-  action.bindings.push_back(binding);
-  m_ActionBindings[actionName] = action;
+    ActionBinding action;
+    action.name = actionName;
+    action.bindings.push_back(binding);
+    m_actionBindings[actionName] = action;
 
-  m_InputStates[binding] = ButtonState{};
+    m_inputStates[binding] = ButtonState{};
 }
 
-void InputManager::addActionBinding(const std::string& actionName,
-                                    const InputBinding& binding) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+void InputManager::AddActionBinding(const std::string &actionName,
+                                    const InputBinding &binding) {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_ActionBindings.find(actionName);
-  if (it != m_ActionBindings.end()) {
-    it->second.bindings.push_back(binding);
-    m_InputStates[binding] = ButtonState{};
-  }
-}
-
-bool InputManager::isActionDown(const std::string& actionName) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-
-  auto it = m_ActionBindings.find(actionName);
-  if (it == m_ActionBindings.end()) return false;
-
-  const auto& action = it->second;
-
-  // Check modifier requirements
-  if (action.requiresModifiers) {
-    // Query current modifier state
-    int currentMods = 0;
-    if (glfwGetKey(m_Window->getHandle(), GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-        glfwGetKey(m_Window->getHandle(), GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
-      currentMods |= GLFW_MOD_SHIFT;
+    auto it = m_actionBindings.find(actionName);
+    if (it != m_actionBindings.end()) {
+        it->second.bindings.push_back(binding);
+        m_inputStates[binding] = ButtonState{};
     }
-    if (glfwGetKey(m_Window->getHandle(), GLFW_KEY_LEFT_CONTROL) ==
+}
+
+bool InputManager::IsActionDown(const std::string &actionName) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_actionBindings.find(actionName);
+    if (it == m_actionBindings.end()) return false;
+
+    const auto &action = it->second;
+
+    // Check modifier requirements
+    if (action.requiresModifiers) {
+        // Query current modifier state
+        int currentMods = 0;
+        if (glfwGetKey(m_window->GetHandle(), GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+            glfwGetKey(m_window->GetHandle(), GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
+            currentMods |= GLFW_MOD_SHIFT;
+        }
+        if (glfwGetKey(m_window->GetHandle(), GLFW_KEY_LEFT_CONTROL) ==
             GLFW_PRESS ||
-        glfwGetKey(m_Window->getHandle(), GLFW_KEY_RIGHT_CONTROL) ==
+            glfwGetKey(m_window->GetHandle(), GLFW_KEY_RIGHT_CONTROL) ==
             GLFW_PRESS) {
-      currentMods |= GLFW_MOD_CONTROL;
-    }
-    if (glfwGetKey(m_Window->getHandle(), GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-        glfwGetKey(m_Window->getHandle(), GLFW_KEY_RIGHT_ALT) == GLFW_PRESS) {
-      currentMods |= GLFW_MOD_ALT;
-    }
-    if (glfwGetKey(m_Window->getHandle(), GLFW_KEY_LEFT_SUPER) == GLFW_PRESS ||
-        glfwGetKey(m_Window->getHandle(), GLFW_KEY_RIGHT_SUPER) == GLFW_PRESS) {
-      currentMods |= GLFW_MOD_SUPER;
+            currentMods |= GLFW_MOD_CONTROL;
+        }
+        if (glfwGetKey(m_window->GetHandle(), GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+            glfwGetKey(m_window->GetHandle(), GLFW_KEY_RIGHT_ALT) == GLFW_PRESS) {
+            currentMods |= GLFW_MOD_ALT;
+        }
+        if (glfwGetKey(m_window->GetHandle(), GLFW_KEY_LEFT_SUPER) == GLFW_PRESS ||
+            glfwGetKey(m_window->GetHandle(), GLFW_KEY_RIGHT_SUPER) == GLFW_PRESS) {
+            currentMods |= GLFW_MOD_SUPER;
+        }
+
+        // Check if required modifiers match
+        if ((currentMods & action.requiredMods) != action.requiredMods) {
+            return false;
+        }
     }
 
-    // Check if required modifiers match
-    if ((currentMods & action.requiredMods) != action.requiredMods) {
-      return false;
+    for (const auto &binding: action.bindings) {
+        if (IsBindingDown(binding)) {
+            return true;
+        }
     }
-  }
 
-  for (const auto& binding : action.bindings) {
-    if (isBindingDown(binding)) {
-      return true;
-    }
-  }
-
-  return false;
+    return false;
 }
 
-bool InputManager::wasActionPressed(const std::string& actionName) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+bool InputManager::WasActionPressed(const std::string &actionName) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_ActionBindings.find(actionName);
-  if (it == m_ActionBindings.end()) return false;
+    auto it = m_actionBindings.find(actionName);
+    if (it == m_actionBindings.end()) return false;
 
-  const auto& action = it->second;
-  for (const auto& binding : action.bindings) {
-    if (wasBindingPressed(binding)) {
-      return true;
+    const auto &action = it->second;
+    for (const auto &binding: action.bindings) {
+        if (WasBindingPressed(binding)) {
+            return true;
+        }
     }
-  }
 
-  return false;
+    return false;
 }
 
-bool InputManager::wasActionReleased(const std::string& actionName) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+bool InputManager::WasActionReleased(const std::string &actionName) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_ActionBindings.find(actionName);
-  if (it == m_ActionBindings.end()) return false;
+    auto it = m_actionBindings.find(actionName);
+    if (it == m_actionBindings.end()) return false;
 
-  const auto& action = it->second;
-  for (const auto& binding : action.bindings) {
-    if (wasBindingReleased(binding)) {
-      return true;
+    const auto &action = it->second;
+    for (const auto &binding: action.bindings) {
+        if (WasBindingReleased(binding)) {
+            return true;
+        }
     }
-  }
 
-  return false;
+    return false;
 }
 
-bool InputManager::wasActionFirstPressed(const std::string& actionName) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+bool InputManager::WasActionFirstPressed(const std::string &actionName) {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_ActionBindings.find(actionName);
-  if (it == m_ActionBindings.end()) return false;
+    auto it = m_actionBindings.find(actionName);
+    if (it == m_actionBindings.end()) return false;
 
-  const auto& action = it->second;
-  for (const auto& binding : action.bindings) {
-    auto stateIt = m_InputStates.find(binding);
-    if (stateIt != m_InputStates.end()) {
-      auto& state = stateIt->second;
-      if (!state.prevDown && state.down && !state.consumed) {
-        state.consumed = true;
-        return true;
-      }
+    const auto &action = it->second;
+    for (const auto &binding: action.bindings) {
+        auto stateIt = m_inputStates.find(binding);
+        if (stateIt != m_inputStates.end()) {
+            auto &state = stateIt->second;
+            if (!state.prevDown && state.down && !state.consumed) {
+                state.consumed = true;
+                return true;
+            }
+        }
     }
-  }
 
-  return false;
+    return false;
 }
 
-void InputManager::remapAction(const std::string& actionName,
-                               const InputBinding& oldBinding,
-                               const InputBinding& newBinding) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+void InputManager::RemapAction(const std::string &actionName,
+                               const InputBinding &oldBinding,
+                               const InputBinding &newBinding) {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_ActionBindings.find(actionName);
-  if (it == m_ActionBindings.end()) return;
+    auto it = m_actionBindings.find(actionName);
+    if (it == m_actionBindings.end()) return;
 
-  auto& bindings = it->second.bindings;
-  auto bindIt = std::find(bindings.begin(), bindings.end(), oldBinding);
-  if (bindIt != bindings.end()) {
-    *bindIt = newBinding;
-    m_InputStates[newBinding] = ButtonState{};
-  }
+    auto &bindings = it->second.bindings;
+    auto bindIt = std::find(bindings.begin(), bindings.end(), oldBinding);
+    if (bindIt != bindings.end()) {
+        *bindIt = newBinding;
+        m_inputStates[newBinding] = ButtonState{};
+    }
 }
 
-void InputManager::clearActionBindings(const std::string& actionName) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  m_ActionBindings.erase(actionName);
+void InputManager::ClearActionBindings(const std::string &actionName) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_actionBindings.erase(actionName);
 }
 
 // --- Axis API ---
 
-void InputManager::registerAxis(const std::string& axisName,
-                                const InputBinding& negativeBinding,
-                                const InputBinding& positiveBinding,
+void InputManager::RegisterAxis(const std::string &axisName,
+                                const InputBinding &negativeBinding,
+                                const InputBinding &positiveBinding,
                                 float scale) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  AxisBinding axis;
-  axis.name = axisName;
-  axis.negativeBinding = negativeBinding;
-  axis.positiveBinding = positiveBinding;
-  axis.scale = scale;
-  axis.isMouseAxis = false;
-  axis.isGamepadAxis = false;
+    AxisBinding axis;
+    axis.name = axisName;
+    axis.negativeBinding = negativeBinding;
+    axis.positiveBinding = positiveBinding;
+    axis.scale = scale;
+    axis.isMouseAxis = false;
+    axis.isGamepadAxis = false;
 
-  m_AxisBindings[axisName] = axis;
+    m_axisBindings[axisName] = axis;
 
-  m_InputStates[negativeBinding] = ButtonState{};
-  m_InputStates[positiveBinding] = ButtonState{};
+    m_inputStates[negativeBinding] = ButtonState{};
+    m_inputStates[positiveBinding] = ButtonState{};
 }
 
-void InputManager::registerGamepadAxis(const std::string& axisName,
+void InputManager::RegisterGamepadAxis(const std::string &axisName,
                                        GamepadAxis axis, int gamepadIndex,
                                        float scale, float deadzone) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  AxisBinding axisBinding;
-  axisBinding.name = axisName;
-  axisBinding.gamepadAxis = axis;
-  axisBinding.gamepadIndex = gamepadIndex;
-  axisBinding.scale = scale;
-  axisBinding.deadzone = deadzone;
-  axisBinding.isGamepadAxis = true;
-  axisBinding.isMouseAxis = false;
+    AxisBinding axisBinding;
+    axisBinding.name = axisName;
+    axisBinding.gamepadAxis = axis;
+    axisBinding.gamepadIndex = gamepadIndex;
+    axisBinding.scale = scale;
+    axisBinding.deadzone = deadzone;
+    axisBinding.isGamepadAxis = true;
+    axisBinding.isMouseAxis = false;
 
-  m_AxisBindings[axisName] = axisBinding;
+    m_axisBindings[axisName] = axisBinding;
 }
 
 // MouseX & MouseY is always available
-float InputManager::getAxis(const std::string& axisName) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+float InputManager::GetAxis(const std::string &axisName) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  auto it = m_AxisBindings.find(axisName);
-  if (it == m_AxisBindings.end()) return 0.0f;
+    auto it = m_axisBindings.find(axisName);
+    if (it == m_axisBindings.end()) return 0.0f;
 
-  const auto& axis = it->second;
+    const auto &axis = it->second;
 
-  // Handle gamepad axis
-  if (axis.isGamepadAxis) {
-    if (axis.gamepadIndex < 0 || axis.gamepadIndex >= 4) return 0.0f;
-    const auto& state = m_GamepadStates[axis.gamepadIndex];
-    if (!state.connected) return 0.0f;
+    // Handle gamepad axis
+    if (axis.isGamepadAxis) {
+        if (axis.gamepadIndex < 0 || axis.gamepadIndex >= 4) return 0.0f;
+        const auto &state = m_gamepadStates[axis.gamepadIndex];
+        if (!state.connected) return 0.0f;
 
-    int axisIndex = static_cast<int>(axis.gamepadAxis);
-    if (axisIndex < 0 || axisIndex >= 6) return 0.0f;
+        int axisIndex = static_cast<int>(axis.gamepadAxis);
+        if (axisIndex < 0 || axisIndex >= 6) return 0.0f;
 
-    float value = state.axes[axisIndex];
-    value = applyDeadzone(value, axis.deadzone);
+        float value = state.axes[axisIndex];
+        value = ApplyDeadzone(value, axis.deadzone);
+        return value * axis.scale;
+    }
+
+    // Handle mouse axis
+    if (axis.isMouseAxis) {
+        if (axisName == "MouseX") return m_mouseDelta.x * axis.scale;
+        if (axisName == "MouseY") return m_mouseDelta.y * axis.scale;
+        return 0.0f;
+    }
+
+    // Handle digital axis (keyboard/mouse buttons)
+    float value = 0.0f;
+    if (IsBindingDown(axis.negativeBinding)) value -= 1.0f;
+    if (IsBindingDown(axis.positiveBinding)) value += 1.0f;
+
     return value * axis.scale;
-  }
-
-  // Handle mouse axis
-  if (axis.isMouseAxis) {
-    if (axisName == "MouseX") return m_MouseDelta.x * axis.scale;
-    if (axisName == "MouseY") return m_MouseDelta.y * axis.scale;
-    return 0.0f;
-  }
-
-  // Handle digital axis (keyboard/mouse buttons)
-  float value = 0.0f;
-  if (isBindingDown(axis.negativeBinding)) value -= 1.0f;
-  if (isBindingDown(axis.positiveBinding)) value += 1.0f;
-
-  return value * axis.scale;
 }
 
-glm::vec2 InputManager::getAxis2D(const std::string& axisNameX,
-                                  const std::string& axisNameY) const {
-  return glm::vec2(getAxis(axisNameX), getAxis(axisNameY));
+glm::vec2 InputManager::GetAxis2D(const std::string &axisNameX,
+                                  const std::string &axisNameY) const {
+    return glm::vec2(GetAxis(axisNameX), GetAxis(axisNameY));
 }
 
 // --- Gamepad API ---
 
-bool InputManager::isGamepadConnected(int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
-  return m_GamepadStates[gamepadIndex].connected;
+bool InputManager::IsGamepadConnected(int gamepadIndex) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
+    return m_gamepadStates[gamepadIndex].connected;
 }
 
-std::string InputManager::getGamepadName(int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return "";
-  return m_GamepadStates[gamepadIndex].name;
+std::string InputManager::GetGamepadName(int gamepadIndex) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return "";
+    return m_gamepadStates[gamepadIndex].name;
 }
 
-int InputManager::getConnectedGamepadCount() const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  int count = 0;
-  for (const auto& state : m_GamepadStates) {
-    if (state.connected) ++count;
-  }
-  return count;
+int InputManager::GetConnectedGamepadCount() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    int count = 0;
+    for (const auto &state: m_gamepadStates) {
+        if (state.connected) ++count;
+    }
+    return count;
 }
 
-bool InputManager::isGamepadButtonDown(GamepadButton button,
+bool InputManager::IsGamepadButtonDown(GamepadButton button,
                                        int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
 
-  const auto& state = m_GamepadStates[gamepadIndex];
-  if (!state.connected) return false;
+    const auto &state = m_gamepadStates[gamepadIndex];
+    if (!state.connected) return false;
 
-  int btnIndex = static_cast<int>(button);
-  if (btnIndex < 0 || btnIndex >= 15) return false;
+    int btnIndex = static_cast<int>(button);
+    if (btnIndex < 0 || btnIndex >= 15) return false;
 
-  return state.buttons[btnIndex];
+    return state.buttons[btnIndex];
 }
 
-bool InputManager::wasGamepadButtonPressed(GamepadButton button,
+bool InputManager::WasGamepadButtonPressed(GamepadButton button,
                                            int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
 
-  const auto& state = m_GamepadStates[gamepadIndex];
-  if (!state.connected) return false;
+    const auto &state = m_gamepadStates[gamepadIndex];
+    if (!state.connected) return false;
 
-  int btnIndex = static_cast<int>(button);
-  if (btnIndex < 0 || btnIndex >= 15) return false;
+    int btnIndex = static_cast<int>(button);
+    if (btnIndex < 0 || btnIndex >= 15) return false;
 
-  return state.buttons[btnIndex] && !state.prevButtons[btnIndex];
+    return state.buttons[btnIndex] && !state.prevButtons[btnIndex];
 }
 
-bool InputManager::wasGamepadButtonReleased(GamepadButton button,
+bool InputManager::WasGamepadButtonReleased(GamepadButton button,
                                             int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return false;
 
-  const auto& state = m_GamepadStates[gamepadIndex];
-  if (!state.connected) return false;
+    const auto &state = m_gamepadStates[gamepadIndex];
+    if (!state.connected) return false;
 
-  int btnIndex = static_cast<int>(button);
-  if (btnIndex < 0 || btnIndex >= 15) return false;
+    int btnIndex = static_cast<int>(button);
+    if (btnIndex < 0 || btnIndex >= 15) return false;
 
-  return !state.buttons[btnIndex] && state.prevButtons[btnIndex];
+    return !state.buttons[btnIndex] && state.prevButtons[btnIndex];
 }
 
-float InputManager::getGamepadAxis(GamepadAxis axis, int gamepadIndex) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  if (gamepadIndex < 0 || gamepadIndex >= 4) return 0.0f;
+float InputManager::GetGamepadAxis(GamepadAxis axis, int gamepadIndex) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (gamepadIndex < 0 || gamepadIndex >= 4) return 0.0f;
 
-  const auto& state = m_GamepadStates[gamepadIndex];
-  if (!state.connected) return 0.0f;
+    const auto &state = m_gamepadStates[gamepadIndex];
+    if (!state.connected) return 0.0f;
 
-  int axisIndex = static_cast<int>(axis);
-  if (axisIndex < 0 || axisIndex >= 6) return 0.0f;
+    int axisIndex = static_cast<int>(axis);
+    if (axisIndex < 0 || axisIndex >= 6) return 0.0f;
 
-  float value = state.axes[axisIndex];
-  return applyDeadzone(value, m_DefaultDeadzone);
+    float value = state.axes[axisIndex];
+    return ApplyDeadzone(value, m_defaultDeadzone);
 }
 
-glm::vec2 InputManager::getGamepadLeftStick(int gamepadIndex) const {
-  return glm::vec2(getGamepadAxis(GamepadAxis::LeftX, gamepadIndex),
-                   getGamepadAxis(GamepadAxis::LeftY, gamepadIndex));
+glm::vec2 InputManager::GetGamepadLeftStick(int gamepadIndex) const {
+    return glm::vec2(GetGamepadAxis(GamepadAxis::LeftX, gamepadIndex),
+                     GetGamepadAxis(GamepadAxis::LeftY, gamepadIndex));
 }
 
-glm::vec2 InputManager::getGamepadRightStick(int gamepadIndex) const {
-  return glm::vec2(getGamepadAxis(GamepadAxis::RightX, gamepadIndex),
-                   getGamepadAxis(GamepadAxis::RightY, gamepadIndex));
+glm::vec2 InputManager::GetGamepadRightStick(int gamepadIndex) const {
+    return glm::vec2(GetGamepadAxis(GamepadAxis::RightX, gamepadIndex),
+                     GetGamepadAxis(GamepadAxis::RightY, gamepadIndex));
 }
 
-void InputManager::setGamepadVibration(int gamepadIndex, float leftMotor,
+void InputManager::SetGamepadVibration(int gamepadIndex, float leftMotor,
                                        float rightMotor) {
-  // Note: GLFW doesn't support rumble/vibration natively
-  // TODO: use a platform-specific API
+    // Note: GLFW doesn't support rumble/vibration natively
+    // TODO: use a platform-specific API
 }
 
 // --- Mouse API ---
 
-glm::vec2 InputManager::getMousePosition() const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  return m_MousePos;
+glm::vec2 InputManager::GetMousePosition() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_mousePos;
 }
 
-glm::vec2 InputManager::getMouseDelta() const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  return m_MouseDelta;
+glm::vec2 InputManager::GetMouseDelta() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_mouseDelta;
 }
 
-float InputManager::getMouseWheel() const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  return static_cast<float>(m_WheelDelta);
+float InputManager::GetMouseWheel() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return static_cast<float>(m_wheelDelta);
 }
 
-void InputManager::setCursorMode(int mode) {
-  if (m_Window) {
-    glfwSetInputMode(m_Window->getHandle(), GLFW_CURSOR, mode);
-    resetMouseDelta();  // Prevent huge delta on next frame
-  }
+void InputManager::SetCursorMode(int mode) {
+    if (m_window) {
+        glfwSetInputMode(m_window->GetHandle(), GLFW_CURSOR, mode);
+        ResetMouseDelta(); // Prevent huge delta on next frame
+    }
 }
 
-void InputManager::resetMouseDelta() {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+void InputManager::ResetMouseDelta() {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  // Get current position and reset delta
-  double mx, my;
-  glfwGetCursorPos(m_Window->getHandle(), &mx, &my);
-  m_MousePos = glm::vec2(static_cast<float>(mx), static_cast<float>(my));
-  m_PrevMousePos = m_MousePos;
-  m_MouseDelta = glm::vec2(0.0f);
+    // Get current position and reset delta
+    double mx, my;
+    glfwGetCursorPos(m_window->GetHandle(), &mx, &my);
+    m_mousePos = glm::vec2(static_cast<float>(mx), static_cast<float>(my));
+    m_prevMousePos = m_mousePos;
+    m_mouseDelta = glm::vec2(0.0f);
 }
 
 // --- Raw Input ---
 
-bool InputManager::isKeyDown(int key) const {
-  if (!m_Window) return false;
-  return glfwGetKey(m_Window->getHandle(), key) == GLFW_PRESS;
+bool InputManager::IsKeyDown(int key) const {
+    if (!m_window) return false;
+    return glfwGetKey(m_window->GetHandle(), key) == GLFW_PRESS;
 }
 
-bool InputManager::isMouseButtonDown(int button) const {
-  if (!m_Window) return false;
-  return glfwGetMouseButton(m_Window->getHandle(), button) == GLFW_PRESS;
+bool InputManager::IsMouseButtonDown(int button) const {
+    if (!m_window) return false;
+    return glfwGetMouseButton(m_window->GetHandle(), button) == GLFW_PRESS;
 }
 
 // --- Persistence ---
 
-bool InputManager::saveBindings(const std::string& filename) const {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+bool InputManager::SaveBindings(const std::string &filename) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  nlohmann::json j;
+    nlohmann::json j;
 
-  // Save actions
-  for (const auto& [name, action] : m_ActionBindings) {
-    nlohmann::json actionJson;
-    nlohmann::json bindingsArray = nlohmann::json::array();
+    // Save actions
+    for (const auto &[name, action]: m_actionBindings) {
+        nlohmann::json actionJson;
+        nlohmann::json bindingsArray = nlohmann::json::array();
 
-    for (const auto& binding : action.bindings) {
-      nlohmann::json bindingJson;
-      bindingJson["source"] = static_cast<int>(binding.source);
-      bindingJson["code"] = binding.code;
-      bindingJson["gamepadIndex"] = binding.gamepadIndex;
-      bindingsArray.push_back(bindingJson);
-    }
-
-    actionJson["bindings"] = bindingsArray;
-    actionJson["requiresModifiers"] = action.requiresModifiers;
-    actionJson["requiredMods"] = action.requiredMods;
-    j["actions"][name] = actionJson;
-  }
-
-  // Save axes
-  for (const auto& [name, axis] : m_AxisBindings) {
-    nlohmann::json axisJson;
-    axisJson["negativeSource"] = static_cast<int>(axis.negativeBinding.source);
-    axisJson["negativeCode"] = axis.negativeBinding.code;
-    axisJson["positiveSource"] = static_cast<int>(axis.positiveBinding.source);
-    axisJson["positiveCode"] = axis.positiveBinding.code;
-    axisJson["scale"] = axis.scale;
-    axisJson["deadzone"] = axis.deadzone;
-    axisJson["isMouseAxis"] = axis.isMouseAxis;
-    axisJson["isGamepadAxis"] = axis.isGamepadAxis;
-
-    if (axis.isGamepadAxis) {
-      axisJson["gamepadAxis"] = static_cast<int>(axis.gamepadAxis);
-      axisJson["gamepadIndex"] = axis.gamepadIndex;
-    }
-
-    j["axes"][name] = axisJson;
-  }
-
-  std::ofstream ofs(filename);
-  if (!ofs) return false;
-
-  ofs << j.dump(2);
-  return true;
-}
-
-bool InputManager::loadBindings(const std::string& filename) {
-  std::ifstream ifs(filename);
-  if (!ifs) return false;
-
-  nlohmann::json j;
-  try {
-    ifs >> j;
-  } catch (const std::exception& e) {
-    std::cerr << "Failed to parse input bindings: " << e.what() << "\n";
-    return false;
-  }
-
-  std::lock_guard<std::mutex> lock(m_Mutex);
-
-  // Load actions
-  if (j.contains("actions")) {
-    for (auto& [name, actionData] : j["actions"].items()) {
-      ActionBinding action;
-      action.name = name;
-      action.requiresModifiers = actionData.value("requiresModifiers", false);
-      action.requiredMods = actionData.value("requiredMods", 0);
-
-      if (actionData.contains("bindings")) {
-        for (const auto& bindingData : actionData["bindings"]) {
-          InputBinding binding;
-          binding.source =
-              static_cast<InputSource>(bindingData.value("source", 0));
-          binding.code = bindingData.value("code", GLFW_KEY_UNKNOWN);
-          binding.gamepadIndex = bindingData.value("gamepadIndex", 0);
-          action.bindings.push_back(binding);
-          m_InputStates[binding] = ButtonState{};
+        for (const auto &binding: action.bindings) {
+            nlohmann::json bindingJson;
+            bindingJson["source"] = static_cast<int>(binding.source);
+            bindingJson["code"] = binding.code;
+            bindingJson["gamepadIndex"] = binding.gamepadIndex;
+            bindingsArray.push_back(bindingJson);
         }
-      }
 
-      m_ActionBindings[action.name] = action;
+        actionJson["bindings"] = bindingsArray;
+        actionJson["requiresModifiers"] = action.requiresModifiers;
+        actionJson["requiredMods"] = action.requiredMods;
+        j["actions"][name] = actionJson;
     }
-  }
 
-  // Load axes
-  if (j.contains("axes")) {
-    for (auto& [name, axisData] : j["axes"].items()) {
-      AxisBinding axis;
-      axis.name = name;
-      axis.negativeBinding.source =
-          static_cast<InputSource>(axisData.value("negativeSource", 0));
-      axis.negativeBinding.code =
-          axisData.value("negativeCode", GLFW_KEY_UNKNOWN);
-      axis.positiveBinding.source =
-          static_cast<InputSource>(axisData.value("positiveSource", 0));
-      axis.positiveBinding.code =
-          axisData.value("positiveCode", GLFW_KEY_UNKNOWN);
-      axis.scale = axisData.value("scale", 1.0f);
-      axis.deadzone = axisData.value("deadzone", 0.15f);
-      axis.isMouseAxis = axisData.value("isMouseAxis", false);
-      axis.isGamepadAxis = axisData.value("isGamepadAxis", false);
+    // Save axes
+    for (const auto &[name, axis]: m_axisBindings) {
+        nlohmann::json axisJson;
+        axisJson["negativeSource"] = static_cast<int>(axis.negativeBinding.source);
+        axisJson["negativeCode"] = axis.negativeBinding.code;
+        axisJson["positiveSource"] = static_cast<int>(axis.positiveBinding.source);
+        axisJson["positiveCode"] = axis.positiveBinding.code;
+        axisJson["scale"] = axis.scale;
+        axisJson["deadzone"] = axis.deadzone;
+        axisJson["isMouseAxis"] = axis.isMouseAxis;
+        axisJson["isGamepadAxis"] = axis.isGamepadAxis;
 
-      if (axis.isGamepadAxis) {
-        axis.gamepadAxis =
-            static_cast<GamepadAxis>(axisData.value("gamepadAxis", 0));
-        axis.gamepadIndex = axisData.value("gamepadIndex", 0);
-      }
+        if (axis.isGamepadAxis) {
+            axisJson["gamepadAxis"] = static_cast<int>(axis.gamepadAxis);
+            axisJson["gamepadIndex"] = axis.gamepadIndex;
+        }
 
-      m_AxisBindings[axis.name] = axis;
-      m_InputStates[axis.negativeBinding] = ButtonState{};
-      m_InputStates[axis.positiveBinding] = ButtonState{};
+        j["axes"][name] = axisJson;
     }
-  }
 
-  return true;
+    std::ofstream ofs(filename);
+    if (!ofs) return false;
+
+    ofs << j.dump(2);
+    return true;
 }
 
-void InputManager::resetFirstPressFlags() {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  for (auto& [binding, state] : m_InputStates) {
-    state.consumed = false;
-  }
+bool InputManager::LoadBindings(const std::string &filename) {
+    std::ifstream ifs(filename);
+    if (!ifs) return false;
+
+    nlohmann::json j;
+    try {
+        ifs >> j;
+    } catch (const std::exception &e) {
+        std::cerr << "Failed to parse input bindings: " << e.what() << "\n";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    // Load actions
+    if (j.contains("actions")) {
+        for (auto &[name, actionData]: j["actions"].items()) {
+            ActionBinding action;
+            action.name = name;
+            action.requiresModifiers = actionData.value("requiresModifiers", false);
+            action.requiredMods = actionData.value("requiredMods", 0);
+
+            if (actionData.contains("bindings")) {
+                for (const auto &bindingData: actionData["bindings"]) {
+                    InputBinding binding;
+                    binding.source =
+                            static_cast<InputSource>(bindingData.value("source", 0));
+                    binding.code = bindingData.value("code", GLFW_KEY_UNKNOWN);
+                    binding.gamepadIndex = bindingData.value("gamepadIndex", 0);
+                    action.bindings.push_back(binding);
+                    m_inputStates[binding] = ButtonState{};
+                }
+            }
+
+            m_actionBindings[action.name] = action;
+        }
+    }
+
+    // Load axes
+    if (j.contains("axes")) {
+        for (auto &[name, axisData]: j["axes"].items()) {
+            AxisBinding axis;
+            axis.name = name;
+            axis.negativeBinding.source =
+                    static_cast<InputSource>(axisData.value("negativeSource", 0));
+            axis.negativeBinding.code =
+                    axisData.value("negativeCode", GLFW_KEY_UNKNOWN);
+            axis.positiveBinding.source =
+                    static_cast<InputSource>(axisData.value("positiveSource", 0));
+            axis.positiveBinding.code =
+                    axisData.value("positiveCode", GLFW_KEY_UNKNOWN);
+            axis.scale = axisData.value("scale", 1.0f);
+            axis.deadzone = axisData.value("deadzone", 0.15f);
+            axis.isMouseAxis = axisData.value("isMouseAxis", false);
+            axis.isGamepadAxis = axisData.value("isGamepadAxis", false);
+
+            if (axis.isGamepadAxis) {
+                axis.gamepadAxis =
+                        static_cast<GamepadAxis>(axisData.value("gamepadAxis", 0));
+                axis.gamepadIndex = axisData.value("gamepadIndex", 0);
+            }
+
+            m_axisBindings[axis.name] = axis;
+            m_inputStates[axis.negativeBinding] = ButtonState{};
+            m_inputStates[axis.positiveBinding] = ButtonState{};
+        }
+    }
+
+    return true;
 }
 
-size_t InputManager::getQueuedEventCount() const {
-  std::lock_guard<std::mutex> lock(m_QueueMutex);
-  return m_EventQueue.size();
+void InputManager::ResetFirstPressFlags() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto &[binding, state]: m_inputStates) {
+        state.consumed = false;
+    }
 }
 
-void InputManager::clearEventQueue() {
-  std::lock_guard<std::mutex> lock(m_QueueMutex);
-  m_EventQueue.clear();
+size_t InputManager::GetQueuedEventCount() const {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    return m_eventQueue.size();
+}
+
+void InputManager::ClearEventQueue() {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    m_eventQueue.clear();
 }
 
 // --- Callback Handlers ---
 
-void InputManager::onKey(int key, int scancode, int action, int mods) {
-  InputBinding binding = KeyboardBinding(key);
+void InputManager::OnKey(int key, int scancode, int action, int mods) {
+    InputBinding binding = KeyboardBinding(key);
 
-  bool isDown = (action == GLFW_PRESS || action == GLFW_REPEAT);
+    bool isDown = (action == GLFW_PRESS || action == GLFW_REPEAT);
 
-  // Update state
-  {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    updateButtonState(binding, isDown);
-  }
-
-  // Trigger action events
-  if (action == GLFW_PRESS) {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-      for (const auto& b : actionBinding.bindings) {
-        if (b == binding) {
-          triggerActionPressed(actionName);
-          break;
-        }
-      }
+    // Update state
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        UpdateButtonState(binding, isDown);
     }
-  } else if (action == GLFW_RELEASE) {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-      for (const auto& b : actionBinding.bindings) {
-        if (b == binding) {
-          triggerActionReleased(actionName);
-          break;
+
+    // Trigger action events
+    if (action == GLFW_PRESS) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto &[actionName, actionBinding]: m_actionBindings) {
+            for (const auto &b: actionBinding.bindings) {
+                if (b == binding) {
+                    TriggerActionPressed(actionName);
+                    break;
+                }
+            }
         }
-      }
+    } else if (action == GLFW_RELEASE) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto &[actionName, actionBinding]: m_actionBindings) {
+            for (const auto &b: actionBinding.bindings) {
+                if (b == binding) {
+                    TriggerActionReleased(actionName);
+                    break;
+                }
+            }
+        }
     }
-  }
 }
 
-void InputManager::onMouseButton(int button, int action, int mods) {
-  InputBinding binding = MouseBinding(button);
+void InputManager::OnMouseButton(int button, int action, int mods) {
+    InputBinding binding = MouseBinding(button);
 
-  bool isDown = (action == GLFW_PRESS);
+    bool isDown = (action == GLFW_PRESS);
 
-  // Update state
-  {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    updateButtonState(binding, isDown);
-  }
-
-  // Trigger action events
-  if (action == GLFW_PRESS) {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-      for (const auto& b : actionBinding.bindings) {
-        if (b == binding) {
-          triggerActionPressed(actionName);
-          break;
-        }
-      }
+    // Update state
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        UpdateButtonState(binding, isDown);
     }
-  } else if (action == GLFW_RELEASE) {
-    std::lock_guard<std::mutex> lock(m_Mutex);
-    for (const auto& [actionName, actionBinding] : m_ActionBindings) {
-      for (const auto& b : actionBinding.bindings) {
-        if (b == binding) {
-          triggerActionReleased(actionName);
-          break;
+
+    // Trigger action events
+    if (action == GLFW_PRESS) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto &[actionName, actionBinding]: m_actionBindings) {
+            for (const auto &b: actionBinding.bindings) {
+                if (b == binding) {
+                    TriggerActionPressed(actionName);
+                    break;
+                }
+            }
         }
-      }
+    } else if (action == GLFW_RELEASE) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto &[actionName, actionBinding]: m_actionBindings) {
+            for (const auto &b: actionBinding.bindings) {
+                if (b == binding) {
+                    TriggerActionReleased(actionName);
+                    break;
+                }
+            }
+        }
     }
-  }
 }
+
 // this could be called multiple times per frame ,and the delta is accumulated
 // which could cause a jittery input in the right scenario
-void InputManager::onCursorPos(double x, double y) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
+void InputManager::OnCursorPos(double x, double y) {
+    std::lock_guard<std::mutex> lock(m_mutex);
 
-  glm::vec2 newPos(static_cast<float>(x), static_cast<float>(y));
-  m_MouseDelta = (newPos - m_MousePos) * m_MouseSensitivity;
-  m_MousePos = newPos;
+    glm::vec2 newPos(static_cast<float>(x), static_cast<float>(y));
+    // m_MouseDelta = (newPos - m_MousePos) * m_MouseSensitivity;
+    m_mousePos = newPos;
 }
 
-void InputManager::onScroll(double xoffset, double yoffset) {
-  std::lock_guard<std::mutex> lock(m_Mutex);
-  m_WheelDelta += yoffset;
+void InputManager::OnScroll(double xoffset, double yoffset) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_wheelDelta += yoffset;
 }
 
-void InputManager::onCharInput(unsigned int codepoint) {
-  if (m_CallbackMode == CallbackMode::Immediate) {
-    if (m_TextInputCallback) {
-      m_TextInputCallback(codepoint);
+void InputManager::OnCharInput(unsigned int codepoint) {
+    if (m_callbackMode == CallbackMode::Immediate) {
+        if (m_textInputCallback) {
+            m_textInputCallback(codepoint);
+        }
+    } else {
+        PushEvent(InputEvent::TextInput(codepoint, GetTime()));
     }
-  } else {
-    pushEvent(InputEvent::TextInput(codepoint, getTime()));
-  }
 }

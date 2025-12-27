@@ -13,11 +13,8 @@
 Renderer::Renderer(Window *window, Device *device, ResourceManager *resourceManager)
     : m_window(window), m_device(device), m_resourceManager(resourceManager)
       , m_isFrameStarted(false) {
-    m_width = m_window->getWidth();
-    m_height = m_window->getHeight();
-    m_directionalLight.direction = glm::normalize(glm::vec3(-1.0f, -1.0f, -1.0f));
-    m_directionalLight.color = glm::vec3(1.0f, 1.0f, 1.0f);
-    m_directionalLight.intensity = 1.0f;
+    m_width = m_window->GetWidth();
+    m_height = m_window->GetHeight();
 
     CommandQueueCreateInfo graphicsQueueCI = {
         .type = QueueType::Graphics,
@@ -26,8 +23,8 @@ Renderer::Renderer(Window *window, Device *device, ResourceManager *resourceMana
     m_graphicsQueue = std::unique_ptr<CommandQueue>(m_device->CreateCommandQueue(graphicsQueueCI));
 
     m_swapchain = std::unique_ptr<Swapchain>(
-        m_device->CreateSwapchain(window->getHwnd(), m_graphicsQueue.get(),
-                                  window->getWidth(), window->getHeight()));
+        m_device->CreateSwapchain(window->GetHwnd(), m_graphicsQueue.get(),
+                                  window->GetWidth(), window->GetHeight()));
 
     m_renderGraph = std::make_unique<RenderGraph>(m_device, m_graphicsQueue.get(), FrameCount);
 
@@ -45,13 +42,17 @@ Renderer::Renderer(Window *window, Device *device, ResourceManager *resourceMana
             .stage = ShaderStage::Pixel
         },
         .vertexAttributes = {
-            {"POSITION", 0, TextureFormat::RGB32_FLOAT, offsetof(Vertex, position)},
-            {"NORMAL", 0, TextureFormat::RGB32_FLOAT, offsetof(Vertex, normal)},
-            {"TEXCOORD", 0, TextureFormat::RG32_FLOAT, offsetof(Vertex, texCoord)},
-            {"TANGENT", 0, TextureFormat::RGB32_FLOAT, offsetof(Vertex, tangent)},
+            {"POSITION", 0, TextureFormat::RGB32_FLOAT, 0, 0},
+            {"NORMAL", 0, TextureFormat::RGB32_FLOAT, 1, 0},
+            {"TEXCOORD", 0, TextureFormat::RG32_FLOAT, 2, 0},
+            {"TANGENT", 0, TextureFormat::RGB32_FLOAT, 3, 0},
         },
-        .vertexAttributeCount = 4,
-        .vertexStride = sizeof(Vertex),
+        .vertexBuffers = {
+            {.binding = 0, .stride = sizeof(VPosition), .rate = InputRate::PerVertex},
+            {.binding = 1, .stride = sizeof(VNormal), .rate = InputRate::PerVertex},
+            {.binding = 2, .stride = sizeof(VTexCoord), .rate = InputRate::PerVertex},
+            {.binding = 3, .stride = sizeof(VTangent), .rate = InputRate::PerVertex},
+        },
         .cullMode = CullMode::Back,
         .wireframe = false,
         .sampleCount = 1,
@@ -73,6 +74,8 @@ Renderer::Renderer(Window *window, Device *device, ResourceManager *resourceMana
     m_defaultTexture = m_resourceManager->LoadTexture("assets/uv-test.png");
 
     //TODO: Sync buffer creation on device
+    // Wait for Buffer to be created, this should be signaled by the device.
+    // Maybe a work queue that clears once all operations are completed.
     WaitForGPU();
 }
 
@@ -90,32 +93,59 @@ void Renderer::CreateFrameResources() {
             .size = sizeof(PerFrameData),
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "PerFrameBuffer",
+            .debugName = "generalBuffer_" + std::to_string(i),
         };
-        m_frameResources[i].perFrameBuffer = std::unique_ptr<Buffer>(
+        m_frameResources[i].generalBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(perFrameBufferCI));
 
-        BufferCreateInfo perObjectBufferCI = {
-            .size = sizeof(PerObjectData) * 256,
+        BufferCreateInfo transformBufferCI = {
+            .size = sizeof(GPUTransform) * MAX_OBJECTS_PER_FRAME,
             // Support up to 256 objects per frame (limited by uniform max size of 65536 bytes)
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "PerObjectBuffer",
+            .debugName = "transformBuffer_" + std::to_string(i),
         };
-        m_frameResources[i].perObjectBuffer = std::unique_ptr<Buffer>(
-            m_device->CreateBuffer(perObjectBufferCI));
+        m_frameResources[i].transformBuffer = std::unique_ptr<Buffer>(
+            m_device->CreateBuffer(transformBufferCI));
+
+        BufferCreateInfo meshDataBufferCI = {
+            .size = sizeof(MeshData) * MAX_OBJECTS_PER_FRAME,
+            .usage = BufferUsage::Uniform,
+            .memoryType = MemoryType::Upload,
+            .debugName = "meshDataBuffer_" + std::to_string(i),
+        };
+        m_frameResources[i].meshDataBuffer = std::unique_ptr<Buffer>(
+            m_device->CreateBuffer(meshDataBufferCI));
+
+        BufferCreateInfo materialBufferCI = {
+            .size = sizeof(Material) * MAX_OBJECTS_PER_FRAME,
+            .usage = BufferUsage::Uniform,
+            .memoryType = MemoryType::Upload,
+            .debugName = "materialBuffer_" + std::to_string(i),
+        };
+        m_frameResources[i].materialBuffer = std::unique_ptr<Buffer>(
+            m_device->CreateBuffer(materialBufferCI));
+
+        BufferCreateInfo instanceBuffer = {
+          .size = sizeof(InstanceData) * MAX_OBJECTS_PER_FRAME,
+          .usage = BufferUsage::Uniform,
+          .memoryType = MemoryType::Upload,
+          .debugName = "instanceBuffer_" + std::to_string(i),
+        };
+        m_frameResources[i].instanceBuffer = std::unique_ptr<Buffer>(
+            m_device->CreateBuffer(instanceBuffer));
 
         //  Persistent map
-        m_frameResources[i].perFrameBuffer->Map();
-        m_frameResources[i].perObjectBuffer->Map();
+        m_frameResources[i].generalBuffer->Map();
+        m_frameResources[i].transformBuffer->Map();
+        m_frameResources[i].meshDataBuffer->Map();
+        m_frameResources[i].materialBuffer->Map();
+        m_frameResources[i].instanceBuffer->Map();
     }
 }
 
 void Renderer::Update(float deltaTime) {
-    m_deltaTime = deltaTime;
     m_totalTime += deltaTime;
-
-    UpdateStatistics();
 }
 
 void Renderer::BeginFrame() {
@@ -160,9 +190,13 @@ void Renderer::EndFrame() {
     // Track fence value for this frame
     m_frameResources[m_frameIndex].fenceValue = m_currentFenceValue;
 
-    m_swapchain->Present(m_window->isVSync());
+    m_swapchain->Present(m_window->IsVSync());
 
     m_isFrameStarted = false;
+}
+
+void Renderer::SetTransforms(const std::vector<glm::mat4> &transforms) {
+
 }
 
 void Renderer::Submit(const RenderInfo &info) {
@@ -186,9 +220,9 @@ void Renderer::SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &
 void Renderer::Resize() {
     WaitForGPU();
     m_renderGraph->Flush();
-    m_width = m_window->getWidth();
-    m_height = m_window->getHeight();
-    m_camera->SetAspectRatio(m_window->getAspectRatio());
+    m_width = m_window->GetWidth();
+    m_height = m_window->GetHeight();
+    m_camera->SetAspectRatio(m_window->GetAspectRatio());
     m_swapchain->Resize(m_width, m_height);
 }
 
@@ -205,10 +239,13 @@ void Renderer::UpdatePerFrameData() {
     frameData.frameIndex = m_frameIndex;
 
     auto &frameResources = GetCurrentFrameResources();
-    void *mappedData = frameResources.perFrameBuffer->GetMappedPtr();
+    void *mappedData = frameResources.generalBuffer->GetMappedPtr();
     if (mappedData) {
         memcpy(mappedData, &frameData, sizeof(PerFrameData));
     }
+
+
+
 }
 
 // Per object data is limited to 256 models because it is maxing out the size limit of 65536 bytes in a uniform buffer.
@@ -225,22 +262,14 @@ void Renderer::UpdatePerObjectData(Transform &transform, Material *material, uin
 
     // Get bindless texture indices from material
     if (material) {
-        // TODO: Fully implement materials
-        Texture *albedo = m_resourceManager->GetTexture(material->GetAlbedoTexture());
-        // Texture* normal = material->GetNormalTexture();
-        // Texture* metallicRoughness = material->GetMetallicRoughnessTexture();
-        // Texture* emissive = material->GetEmissiveTexture();
-
-        objectData.albedoTextureIndex = albedo ? albedo->GetBindlessIndex() : 0;
-        // objectData.normalTextureIndex = normal ? normal->GetBindlessIndex() : 0;
-        // objectData.metallicRoughnessIndex = metallicRoughness ? metallicRoughness->GetBindlessIndex() : 0;
-        // objectData.emissiveTextureIndex = emissive ? emissive->GetBindlessIndex() : 0;
-        objectData.normalTextureIndex = 0;
-        objectData.metallicRoughnessIndex = 0;
-        objectData.emissiveTextureIndex = 0;
+        // Bindless indices are cached when material textures are set
+        objectData.albedoTextureIndex = material->albedoBindlessIndex;
+        objectData.normalTextureIndex = material->normalBindlessIndex;
+        objectData.metallicRoughnessIndex = material->metallicRoughnessBindlessIndex;
+        objectData.emissiveTextureIndex = material->emissiveBindlessIndex;
 
         // Material factors
-        auto &properties = material->GetProperties();
+        auto &properties = material->properties;
         objectData.albedoFactor = glm::vec4(properties.baseColor[0]);
         objectData.metallicFactor = 0;
         objectData.roughnessFactor = 0;
@@ -421,8 +450,8 @@ void Renderer::RenderMain(RenderPassContext &ctx) {
     Viewport vp = {
         .x = 0.0f,
         .y = 0.0f,
-        .width = static_cast<float>(m_window->getWidth()),
-        .height = static_cast<float>(m_window->getHeight()),
+        .width = static_cast<float>(m_window->GetWidth()),
+        .height = static_cast<float>(m_window->GetHeight()),
         .minDepth = 0.0f,
         .maxDepth = 1.0f
     };
@@ -431,8 +460,8 @@ void Renderer::RenderMain(RenderPassContext &ctx) {
     Rect scissor = {
         .left = 0,
         .top = 0,
-        .right = static_cast<int32_t>(m_window->getWidth()),
-        .bottom = static_cast<int32_t>(m_window->getHeight())
+        .right = static_cast<int32_t>(m_window->GetWidth()),
+        .bottom = static_cast<int32_t>(m_window->GetHeight())
     };
     ctx.commandList->SetScissor(scissor);
 
@@ -442,28 +471,19 @@ void Renderer::RenderMain(RenderPassContext &ctx) {
 
     // Bind per-frame data (root parameter 4)
     auto &frameResources = GetCurrentFrameResources();
-    ctx.commandList->SetConstantBuffer(frameResources.perFrameBuffer.get(), 4, 0);
+    ctx.commandList->SetConstantBuffer(frameResources.generalBuffer.get(), 4, 0);
+
+    // Set vertex and index buffers
+    auto buffers = m_resourceManager->GetRenderBuffers();
+    ctx.commandList->SetVertexBuffers({buffers.position, buffers.normal, buffers.texCoord, buffers.tangent},
+                                      {0, 1, 2, 3});
+    ctx.commandList->SetIndexBuffer(buffers.index);
 
     // Render all batches
     for (auto &batch: m_batches) {
         if (!batch.mesh) continue;
-
-        // Set vertex and index buffers
-        ctx.commandList->SetVertexBuffer(batch.mesh->GetVertexBuffer(), 0);
-        ctx.commandList->SetIndexBuffer(batch.mesh->GetIndexBuffer());
-
-        // For each transform in the batch
-        for (size_t i = 0; i < batch.transforms.size(); ++i) {
-            // Update per-object data with bindless texture indices
-            UpdatePerObjectData(batch.transforms[i], batch.material, m_objectIDCounter++);
-
-            // Bind per-object data (root parameter 5)
-            ctx.commandList->SetConstantBuffer(frameResources.perObjectBuffer.get(), 5,
-                                               (m_objectIDCounter - 1) * sizeof(PerObjectData));
-
-            // Draw
-            ctx.commandList->DrawIndexed(batch.mesh->GetIndexCount(), 0);
-        }
+        ctx.commandList->DrawIndexedInstanced(batch.mesh->indexCount, batch.mesh->firstIndex,
+                                                         batch.mesh->instanceCount, batch.mesh->firstInstance);
     }
 }
 
@@ -483,8 +503,4 @@ void Renderer::WaitForGPU() {
     if (m_graphicsQueue) {
         m_graphicsQueue->WaitIdle();
     }
-}
-
-void Renderer::UpdateStatistics() {
-    // TODO: Track CPU and GPU times
 }

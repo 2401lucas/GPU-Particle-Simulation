@@ -61,6 +61,11 @@ enum class ShaderStage {
     Domain
 };
 
+enum class InputRate {
+    PerVertex,
+    PerInstance
+};
+
 struct Shader {
     std::string filepath = "";
     std::string entry = "main";
@@ -77,16 +82,22 @@ struct PipelineCreateInfo {
     Shader computeShader;
 
     // Input layout
+    struct VertexBufferLayout {
+        uint32_t binding;
+        uint32_t stride;
+        InputRate rate; // per-vertex or per-instance
+    };
+
     struct VertexAttribute {
         const char *semantic;
         uint32_t index;
         TextureFormat format;
+        uint32_t binding;
         uint32_t offset;
     };
 
     std::vector<VertexAttribute> vertexAttributes;
-    uint32_t vertexAttributeCount = 0;
-    uint32_t vertexStride = 0;
+    std::vector<VertexBufferLayout> vertexBuffers;
 
     // Rasterizer state
     CullMode cullMode = CullMode::Back;

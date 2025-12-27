@@ -24,8 +24,18 @@ public:
         m_transformMatUpdated = true;
     }
 
+    void AddToPosition(glm::vec3 pos) {
+        m_position += pos;
+        m_transformMatUpdated = true;
+    }
+
     void SetRotation(glm::vec3 rot) {
         m_rotation = rot;
+        m_transformMatUpdated = true;
+    }
+
+    void AddToRotation(glm::vec3 rot) {
+        m_rotation += rot;
         m_transformMatUpdated = true;
     }
 
@@ -53,12 +63,12 @@ public:
 private:
     void CalculateTransformMat();
 
-    bool m_transformMatUpdated = true;
+    // Size; 104 bytes
     glm::mat4 m_transformMat;
-
     glm::vec3 m_position;
     glm::vec3 m_rotation;
     glm::vec3 m_scale;
+    bool m_transformMatUpdated = true;
 };
 
 

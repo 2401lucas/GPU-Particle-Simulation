@@ -4,6 +4,7 @@
 
 #ifndef GPU_PARTICLE_SIM_RENDERER_H
 #define GPU_PARTICLE_SIM_RENDERER_H
+#define MAX_OBJECTS_PER_FRAME 256
 
 #include "../Resources/ResourceHandle.h"
 #include <memory>
@@ -15,6 +16,7 @@
 
 #include "Core/Transform.h"
 #include "Core/Camera.h"
+#include "Core/TransformSystem.h"
 #include "RenderGraph/RenderGraph.h"
 #include "OS/Window/Window.h"
 #include "RHI/Device.h"
@@ -23,35 +25,68 @@
 #include "RHI/CommandQueue.h"
 #include "RHI/Pipeline.h"
 
+//
 struct alignas(256) PerFrameData {
     glm::mat4 viewProjection;
+    glm::mat4 view;
+    glm::mat4 projection;
     glm::vec3 cameraPosition;
+
     float time;
-    glm::vec3 lightDirection;
-    float lightIntensity;
-    glm::vec3 lightColor;
     uint32_t frameIndex;
+    float nearPlane;
+    float farPlane;
 
     // Padding to 256-byte alignment
-    uint32_t padding[36];
+    uint32_t padding[9];
 };
 
-struct alignas(256) PerObjectData {
+static_assert(sizeof(PerFrameData) == 256);
+
+// This gets sorted in batching process for uploading
+// Vert/Frag
+struct alignas(16) GPUInstance {
+    uint32_t meshID;
+    uint32_t materialID;
+    uint32_t transformID;
+    uint32_t padding;
+};
+
+static_assert(sizeof(GPUInstance) == 16);
+
+// Vert/Frag/Compute
+struct alignas(64) GPUTransform {
     glm::mat4 worldMatrix;
-    glm::mat4 normalMatrix; // For correct normal transformation
-    uint32_t albedoTextureIndex;
+    // glm::mat4 normalMatrix; Test if Bandwidth constrained or Compute Costrained
+};
+
+static_assert(sizeof(GPUTransform) == 64);
+// Vert/Frag/Compute
+struct alignas(32) GPUMeshData {
+    uint32_t indexCount;
+    uint32_t firstIndex;
+    int32_t vertexOffset;
+
+    // Bindless Data
+    uint32_t parentVertexBufferID;
+
+    // TODO: Culling Data
+    uint32_t padding[4];
+};
+
+static_assert(sizeof(GPUMeshData) == 32);
+// Vert/Frag/Compute
+struct alignas(32) GPUMaterial {
+    uint32_t materialFlags; // Use to specify material types
+    uint32_t albedoTextureIndex; // Could use more generic names like Tex1... as PBR uses different naming conventions
     uint32_t normalTextureIndex;
     uint32_t metallicRoughnessIndex;
     uint32_t emissiveTextureIndex;
-    glm::vec4 albedoFactor;
-    float metallicFactor;
-    float roughnessFactor;
-    uint32_t materialFlags;
-    uint32_t objectID;
 
-    // Padding to 256-byte alignment
-    uint32_t padding[20];
+    uint32_t padding[3];
 };
+
+static_assert(sizeof(GPUMaterial) == 32);
 
 /// <summary>
 /// Information submitted by the application for rendering
@@ -59,7 +94,7 @@ struct alignas(256) PerObjectData {
 struct RenderInfo {
     MeshHandle mesh;
     MaterialHandle material;
-    Transform transform;
+    TransformHandle transform;
 
     // Rendering flags
     bool castsShadows = true;
@@ -75,9 +110,7 @@ struct RenderInfo {
 /// Batched render command for instanced rendering
 /// </summary>
 struct RenderBatch {
-    Mesh *mesh = nullptr;
-    Material *material = nullptr;
-    std::vector<Transform> transforms;
+    uint32_t instanceID;
     bool castsShadows = true;
 };
 
@@ -97,6 +130,8 @@ public:
 
     // Submission API (Called by Applications)
 
+    void SetTransforms(const std::vector<glm::mat4> &transforms);
+
     /// <summary>
     /// Submit an object for rendering this frame
     /// </summary>
@@ -115,7 +150,7 @@ public:
     /// <summary>
     /// Set directional light
     /// </summary>
-    void SetDirectionalLight(const glm::vec3& direction, const glm::vec3& color, float intensity);
+    void SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color, float intensity);
 
     void EnableShadows(bool enable) { m_shadowsEnabled = enable; }
 
@@ -135,21 +170,26 @@ public:
     const Statistics &GetStatistics() const { return m_statistics; }
 
     void Resize();
+
 private:
+    // External References
+    Window *m_window;
+    ResourceManager *m_resourceManager;
+    Device *m_device;
+
+    // Core Resources
     struct FrameResources {
         uint64_t fenceValue = 0;
-        // Per-frame constant buffers for multi-frame buffering
-        std::unique_ptr<Buffer> perFrameBuffer;
-        std::unique_ptr<Buffer> perObjectBuffer;
+        std::unique_ptr<Buffer> generalBuffer;
+        std::unique_ptr<Buffer> transformBuffer;
+        std::unique_ptr<Buffer> meshDataBuffer;
+        std::unique_ptr<Buffer> materialBuffer;
+        std::unique_ptr<Buffer> instanceBuffer;
     };
 
     FrameResources m_frameResources[FrameCount];
     uint64_t m_currentFenceValue = 0;
 
-    // Core Resources
-    Window *m_window;
-    ResourceManager *m_resourceManager;
-    Device *m_device;
     std::unique_ptr<RenderGraph> m_renderGraph;
     std::unique_ptr<Swapchain> m_swapchain;
 
@@ -174,34 +214,28 @@ private:
     std::vector<RenderInfo> m_submissions;
     std::vector<RenderBatch> m_batches;
 
-    // Scene data
-    Camera *m_camera;
-
-    struct DirectionalLight {
-        glm::vec3 direction;
-        glm::vec3 color;
-        float intensity;
-    } m_directionalLight;
-
     // Configuration
     bool m_shadowsEnabled = false;
     uint32_t m_shadowMapSize = 2048;
     bool m_postProcessingEnabled = false;
 
-    // Internal Resouces
+    // Internal Resources
     bool m_isFrameStarted = false;
     Statistics m_statistics;
-    float m_deltaTime = 0.0f;
     float m_totalTime = 0.0f;
 
     // Frame resource management
     void CreateFrameResources();
-    FrameResources& GetCurrentFrameResources() { return m_frameResources[m_frameIndex]; }
+
+    FrameResources &GetCurrentFrameResources() { return m_frameResources[m_frameIndex]; }
 
     // Submission processing
     void ProcessSubmissions();
+
     void SortSubmissions();
+
     void BatchSubmissions();
+
     void CalculateSortKeys();
 
     // RenderGraph setup
@@ -210,16 +244,21 @@ private:
     // TODO: Move
     // Rendering functions (passed to RenderGraph)
     void RenderShadows(RenderPassContext &ctx);
+
     void RenderMain(RenderPassContext &ctx);
+
     void RenderParticles(RenderPassContext &ctx);
+
     void RenderPostProcess(RenderPassContext &ctx);
+
     void RenderUI(RenderPassContext &ctx);
 
     // Helpers
     void UpdatePerFrameData();
-    void UpdatePerObjectData(Transform& transform, Material* material, uint32_t objectID);
+
+    void UpdatePerDrawGroupData();
+
     void WaitForGPU();
-    void UpdateStatistics();
 };
 
 #endif //GPU_PARTICLE_SIM_RENDERER_H

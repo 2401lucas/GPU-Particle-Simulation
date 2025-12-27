@@ -536,6 +536,8 @@ Swapchain *D3D12Device::CreateSwapchain(void *windowHandle, CommandQueue *queue,
         .Scaling = DXGI_SCALING_STRETCH,
         .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
         .AlphaMode = DXGI_ALPHA_MODE_IGNORE,
+        .Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING,
+
     };
 
     auto q = (D3D12CommandQueue *) queue;
@@ -740,6 +742,13 @@ Buffer *D3D12Device::CreateBuffer(const BufferCreateInfo &desc) {
         buffer->cbvHandle = m_bindlessManager->AllocateCBV(&cbvDesc);
     }
 
+    if (desc.usage == BufferUsage::Vertex) {
+        buffer->vertexBufferView = {
+            .BufferLocation = buffer->gpuAddress,
+            .SizeInBytes = static_cast<UINT>(buffer->size),
+            .StrideInBytes = desc.stride,
+        };
+    }
 
     return buffer.release();
 }
@@ -1086,17 +1095,17 @@ void D3D12Device::CheckBindlessSupport() {
 
 Pipeline *D3D12Device::CreatePipeline(const PipelineCreateInfo &pipelineCreateInfo) {
     std::vector<D3D12_INPUT_ELEMENT_DESC> inputLayout;
-    inputLayout.reserve(pipelineCreateInfo.vertexAttributeCount);
+    inputLayout.reserve(pipelineCreateInfo.vertexAttributes.size());
 
-    for (uint32_t i = 0; i < pipelineCreateInfo.vertexAttributeCount; ++i) {
+    for (uint32_t i = 0; i < pipelineCreateInfo.vertexAttributes.size(); ++i) {
         const auto &a = pipelineCreateInfo.vertexAttributes[i];
         D3D12_INPUT_ELEMENT_DESC desc = {
             .SemanticName = a.semantic,
             .SemanticIndex = a.index,
             .Format = TextureFormatToDxgiFormat(a.format),
-            .InputSlot = 0,
+            .InputSlot = a.binding,
             .AlignedByteOffset = a.offset,
-            .InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+            .InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, //TODO: Support Per Instance
             .InstanceDataStepRate = 0,
         };
         inputLayout.push_back(desc);

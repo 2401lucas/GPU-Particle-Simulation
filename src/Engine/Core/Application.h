@@ -6,6 +6,7 @@
 #define GPU_PARTICLE_SIM_APPLICATION_H
 #include "EventSystem.h"
 #include "Engine.h"
+#include "Scene.h"
 
 class Engine;
 class Renderer;
@@ -81,5 +82,6 @@ public:
     /// Returns whether VSync should be enabled.
     /// </summary>
     virtual bool GetVSyncEnabled() const { return true; }
+
 };
 #endif //GPU_PARTICLE_SIM_APPLICATION_H

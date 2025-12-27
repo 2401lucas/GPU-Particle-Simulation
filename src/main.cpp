@@ -4,6 +4,7 @@
 
 int main() {
     Window::InitGLFW();
+
     {
         auto app = std::make_unique<ParticleApp>();
 

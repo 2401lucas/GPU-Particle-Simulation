@@ -104,7 +104,6 @@ TextureData TextureLoader::LoadPNG(const std::string &path) {
         case 2:
         case 3:
             throw std::runtime_error("No Support for png with %s channels");
-            break;
         case 4: texture.format = TextureFormat::RGBA8_UNORM;
             break;
     }

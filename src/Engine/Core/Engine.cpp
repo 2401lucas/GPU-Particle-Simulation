@@ -26,7 +26,7 @@ void Engine::Initialize(std::unique_ptr<Application> app, const int width, const
     m_renderer = std::make_unique<Renderer>(m_window.get(), m_device.get(), m_resources.get());
 
     m_input = std::make_unique<InputManager>(m_window.get());
-    m_input->setCallbackMode(InputManager::CallbackMode::Queued);
+    m_input->SetCallbackMode(InputManager::CallbackMode::Queued);
 
     m_application->OnInitialize(*this);
 }
@@ -35,21 +35,20 @@ void Engine::Run() {
     auto lastTime = std::chrono::steady_clock::now();
     std::chrono::time_point<std::chrono::steady_clock> now;
 
-    while (!m_window->shouldClose()) {
+    while (!m_window->ShouldClose()) {
         // Time management
         now = std::chrono::steady_clock::now();
         m_deltaTime = std::chrono::duration<float>(now - lastTime).count();;
         lastTime = now;
 
-
-        if (m_window->wasResized()) {
+        if (m_window->WasResized()) {
             m_renderer->Resize();
         }
 
         // Input
-        Window::PollAllEvents();
+        m_window->ProcessEvents();
         m_input->Update();
-
+        
         // Update systems and game logic
         m_application->Update(*this, m_deltaTime);
         // m_physics->Update(m_deltaTime);

@@ -2,26 +2,14 @@
 
 #include <iostream>
 
-// --- Static State ---
-std::unordered_set<Window*>& Window::GetWindowRegistry() {
-  static std::unordered_set<Window*> registry;
-  return registry;
-}
-
-std::mutex& Window::GetRegistryMutex() {
-  static std::mutex mutex;
-  return mutex;
-}
-
 bool& Window::GetGLFWInitFlag() {
   static bool initialized = false;
   return initialized;
 }
 
-// --- Global Control ---
 bool Window::InitGLFW() {
   if (GetGLFWInitFlag()) return true;
-  glfwSetErrorCallback(errorCallback);
+  glfwSetErrorCallback(ErrorCallback);
   if (!glfwInit()) {
     std::cerr << "GLFW: Initialization failed.\n";
     return false;
@@ -37,24 +25,6 @@ void Window::TerminateGLFW() {
   }
 }
 
-void Window::PollAllEvents() { glfwPollEvents(); }
-
-bool Window::HasOpenWindows() {
-  std::lock_guard<std::mutex> lock(GetRegistryMutex());
-  return !GetWindowRegistry().empty();
-}
-
-const std::unordered_set<Window*>& Window::GetAllWindows() {
-  std::lock_guard<std::mutex> lock(GetRegistryMutex());
-  return GetWindowRegistry();
-}
-
-void Window::CloseAll() {
-  std::lock_guard<std::mutex> lock(GetRegistryMutex());
-  for (auto* w : GetWindowRegistry()) w->close();
-}
-
-// --- Construction ---
 Window::Window(const WindowConfig& config) {
   if (!GetGLFWInitFlag())
     throw std::runtime_error("GLFW not initialized. Call Window::InitGLFW().");
@@ -63,183 +33,122 @@ Window::Window(const WindowConfig& config) {
   glfwWindowHint(GLFW_VISIBLE, GLFW_TRUE);
 
   GLFWmonitor* monitor = config.fullscreen ? glfwGetPrimaryMonitor() : nullptr;
-  m_Window = glfwCreateWindow(config.width, config.height, config.title.c_str(),
+  m_window = glfwCreateWindow(config.width, config.height, config.title.c_str(),
                               monitor, nullptr);
 
-  if (!m_Window) throw std::runtime_error("Failed to create GLFW window.");
+  if (!m_window) throw std::runtime_error("Failed to create GLFW window.");
 
-  m_Width = config.width;
-  m_Height = config.height;
-  m_VSyncEnabled = config.vsync;
+  m_width = config.width;
+  m_height = config.height;
+  m_vSyncEnabled = config.vsync;
 
-  glfwSetWindowUserPointer(m_Window, this);
-  glfwSetFramebufferSizeCallback(m_Window, framebufferResizeCallback);
-  glfwSetKeyCallback(m_Window, keyCallback);
-  glfwSetMouseButtonCallback(m_Window, mouseButtonCallback);
-  glfwSetCursorPosCallback(m_Window, cursorPosCallback);
+  glfwSetWindowUserPointer(m_window, this);
+  glfwSetFramebufferSizeCallback(m_window, FramebufferResizeCallback);
+  glfwSetKeyCallback(m_window, KeyCallback);
+  glfwSetMouseButtonCallback(m_window, MouseButtonCallback);
+  glfwSetCursorPosCallback(m_window, CursorPosCallback);
 
-  makeContextCurrent();
-  setVSync(config.vsync);
-
-  try {
-    std::lock_guard<std::mutex> lock(GetRegistryMutex());
-    GetWindowRegistry().insert(this);
-  } catch (...) {
-    glfwDestroyWindow(m_Window);
-    m_Window = nullptr;
-    throw;
-  }
+  MakeContextCurrent();
+  SetVSync(config.vsync);
 }
 
-Window::~Window() { cleanup(); }
+Window::~Window() { Cleanup(); }
 
-void Window::cleanup() {
-  if (!m_Window) return;
+void Window::Cleanup() {
+  if (!m_window) return;
 
-  {
-    std::lock_guard<std::mutex> lock(GetRegistryMutex());
-    GetWindowRegistry().erase(this);
-  }
-
-  clearContext();
-  glfwDestroyWindow(m_Window);
-  m_Window = nullptr;
-}
-
-Window::Window(Window&& other) noexcept { *this = std::move(other); }
-
-Window& Window::operator=(Window&& other) noexcept {
-  if (this != &other) {
-    cleanup();
-
-    m_Window = other.m_Window;
-    m_Width = other.m_Width;
-    m_Height = other.m_Height;
-    m_VSyncEnabled = other.m_VSyncEnabled;
-    m_WasResized = other.m_WasResized;
-    m_ResizeCallback = std::move(other.m_ResizeCallback);
-    m_KeyCallback = std::move(other.m_KeyCallback);
-    m_MouseButtonCallback = std::move(other.m_MouseButtonCallback);
-    m_CursorPosCallback = std::move(other.m_CursorPosCallback);
-
-    other.m_Window = nullptr;
-
-    if (m_Window) {
-      glfwSetWindowUserPointer(m_Window, this);
-      std::lock_guard<std::mutex> lock(GetRegistryMutex());
-      GetWindowRegistry().erase(&other);
-      GetWindowRegistry().insert(this);
-    }
-  }
-  return *this;
+  ClearContext();
+  glfwDestroyWindow(m_window);
+  m_window = nullptr;
 }
 
 // --- Core API ---
-void Window::makeContextCurrent() const { glfwMakeContextCurrent(m_Window); }
+void Window::MakeContextCurrent() const { glfwMakeContextCurrent(m_window); }
 
-void Window::clearContext() { glfwMakeContextCurrent(nullptr); }
+void Window::ClearContext() { glfwMakeContextCurrent(nullptr); }
 
-bool Window::shouldClose() const {
-  return m_Window && glfwWindowShouldClose(m_Window);
+bool Window::ShouldClose() const {
+  return m_window && glfwWindowShouldClose(m_window);
 }
 
-void Window::close() {
-  if (m_Window) glfwSetWindowShouldClose(m_Window, GLFW_TRUE);
+void Window::Close() {
+  if (m_window) glfwSetWindowShouldClose(m_window, GLFW_TRUE);
 }
 
-void Window::setTitle(const std::string& title) {
-  if (m_Window) glfwSetWindowTitle(m_Window, title.c_str());
+void Window::SetTitle(const std::string& title) {
+  if (m_window) glfwSetWindowTitle(m_window, title.c_str());
 }
 
-void Window::setVSync(bool enabled) {
-  if (m_Window) {
-    makeContextCurrent();
+void Window::SetVSync(bool enabled) {
+  if (m_window) {
+    MakeContextCurrent();
     glfwSwapInterval(enabled ? 1 : 0);
-    m_VSyncEnabled = enabled;
+    m_vSyncEnabled = enabled;
   }
 }
 
-void Window::setSize(int width, int height) {
-  if (m_Window) {
-    glfwSetWindowSize(m_Window, width, height);
-    m_Width = width;
-    m_Height = height;
+void Window::SetSize(int width, int height) {
+  if (m_window) {
+    glfwSetWindowSize(m_window, width, height);
+    m_width = width;
+    m_height = height;
   }
 }
 
-void Window::setPosition(int x, int y) {
-  if (m_Window) glfwSetWindowPos(m_Window, x, y);
+void Window::SetPosition(int x, int y) {
+  if (m_window) glfwSetWindowPos(m_window, x, y);
 }
 
-void Window::show() {
-  if (m_Window) glfwShowWindow(m_Window);
+void Window::Show() {
+  if (m_window) glfwShowWindow(m_window);
 }
-void Window::hide() {
-  if (m_Window) glfwHideWindow(m_Window);
+void Window::Hide() {
+  if (m_window) glfwHideWindow(m_window);
 }
-void Window::focus() {
-  if (m_Window) glfwFocusWindow(m_Window);
-}
-
-void Window::processEvents() {
-  if (m_Window) glfwPollEvents();
+void Window::Focus() {
+  if (m_window) glfwFocusWindow(m_window);
 }
 
-// --- Input ---
-bool Window::isKeyPressed(int key) const {
-  return m_Window && glfwGetKey(m_Window, key) == GLFW_PRESS;
+void Window::ProcessEvents() {
+  if (m_window) glfwPollEvents();
 }
 
-bool Window::isMouseButtonPressed(int button) const {
-  return m_Window && glfwGetMouseButton(m_Window, button) == GLFW_PRESS;
+void Window::SetCursorMode(int mode) {
+  if (m_window) glfwSetInputMode(m_window, GLFW_CURSOR, mode);
 }
 
-void Window::getCursorPosition(double& x, double& y) const {
-  if (m_Window)
-    glfwGetCursorPos(m_Window, &x, &y);
-  else {
-    x = 0;
-    y = 0;
-  }
-}
-
-void Window::setCursorMode(int mode) {
-  if (m_Window) glfwSetInputMode(m_Window, GLFW_CURSOR, mode);
-}
-
-// --- Callbacks ---
-void Window::errorCallback(int errorCode, const char* description) {
+void Window::ErrorCallback(int errorCode, const char* description) {
   std::cerr << "GLFW Error [" << errorCode << "]: " << description << "\n";
 }
 
-void Window::framebufferResizeCallback(GLFWwindow* window, int width,
+void Window::FramebufferResizeCallback(GLFWwindow* window, int width,
                                        int height) {
-  if (auto* self = getWindowInstance(window)) {
-    self->m_Width = width;
-    self->m_Height = height;
-    self->m_WasResized = true;
-    if (self->m_ResizeCallback) self->m_ResizeCallback(width, height);
+  if (auto* self = GetWindowInstance(window)) {
+    self->m_width = width;
+    self->m_height = height;
+    self->m_wasResized = true;
+    if (self->m_resizeCallback) self->m_resizeCallback(width, height);
   }
 }
 
-void Window::keyCallback(GLFWwindow* window, int key, int scancode, int action,
+void Window::KeyCallback(GLFWwindow* window, int key, int scancode, int action,
                          int mods) {
-  if (auto* self = getWindowInstance(window); self && self->m_KeyCallback)
-    self->m_KeyCallback(key, scancode, action, mods);
+  if (auto* self = GetWindowInstance(window); self && self->m_keyCallback)
+    self->m_keyCallback(key, scancode, action, mods);
 }
 
-void Window::mouseButtonCallback(GLFWwindow* window, int button, int action,
+void Window::MouseButtonCallback(GLFWwindow* window, int button, int action,
                                  int mods) {
-  if (auto* self = getWindowInstance(window);
-      self && self->m_MouseButtonCallback)
-    self->m_MouseButtonCallback(button, action, mods);
+  if (auto* self = GetWindowInstance(window);
+      self && self->m_mouseButtonCallback)
+    self->m_mouseButtonCallback(button, action, mods);
 }
 
-void Window::cursorPosCallback(GLFWwindow* window, double x, double y) {
-  if (auto* self = getWindowInstance(window); self && self->m_CursorPosCallback)
-    self->m_CursorPosCallback(x, y);
+void Window::CursorPosCallback(GLFWwindow* window, double x, double y) {
+  if (auto* self = GetWindowInstance(window); self && self->m_cursorPosCallback)
+    self->m_cursorPosCallback(x, y);
 }
 
-Window* Window::getWindowInstance(GLFWwindow* window) {
+Window* Window::GetWindowInstance(GLFWwindow* window) {
   return static_cast<Window*>(glfwGetWindowUserPointer(window));
 }

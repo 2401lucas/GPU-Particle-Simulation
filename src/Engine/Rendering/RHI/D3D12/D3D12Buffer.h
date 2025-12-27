@@ -22,7 +22,8 @@ struct D3D12Buffer : public Buffer {
     BindlessHandle uavHandle; // For RW structured buffers
     BindlessHandle cbvHandle; // For constant buffers
 
-
+    D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+    
     D3D12Buffer() = default;
 
     ~D3D12Buffer() override {

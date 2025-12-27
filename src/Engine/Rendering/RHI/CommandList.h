@@ -27,7 +27,7 @@ class CommandList {
 public:
     virtual ~CommandList() = default;
 
-    virtual void Begin(BindlessDescriptorManager *bindlessManager = nullptr) = 0;
+    virtual void Begin() = 0;
 
     virtual void End() = 0;
 
@@ -41,7 +41,9 @@ public:
     virtual void SetPrimitiveTopology(PrimitiveTopology topology) = 0;
 
     // Resource Binding
-    virtual void SetVertexBuffer(Buffer *buffer, uint32_t slot = 0) = 0;
+    virtual void SetVertexBuffer(Buffer *buffer, uint32_t slot) = 0;
+
+    virtual void SetVertexBuffers(std::vector<Buffer *>buffer, std::vector<uint32_t> slot) = 0;
 
     virtual void SetIndexBuffer(Buffer *buffer) = 0;
 
@@ -56,7 +58,10 @@ public:
 
     virtual void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount) = 0;
 
-    virtual void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount) = 0;
+    virtual void DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount,
+                                      uint32_t startInstance) = 0;
+
+    virtual void DrawDCGBuffer(Buffer*);
 
     // Compute
 
@@ -84,10 +89,10 @@ public:
                                   BufferUsage newState) = 0;
 
     // Render Targets
-    virtual void SetRenderTarget(Texture *renderTarget, Texture *depthStencil = nullptr) = 0;
+    virtual void SetRenderTarget(Texture *renderTarget, Texture *depthStencil) = 0;
 
     virtual void SetRenderTargets(Texture **renderTargets, uint32_t count,
-                                  Texture *depthStencil = nullptr) = 0;
+                                  Texture *depthStencil) = 0;
 };
 
 #endif //GPU_PARTICLE_SIM_COMMANDLIST_H

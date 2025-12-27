@@ -11,20 +11,12 @@ ResourceManager::ResourceManager(Device *device, EventSystem *eventSystem) : m_d
                                                                              m_gpuMemoryUsed(0) {
     m_gpuMemorySize = device->GetVideoMemoryBudget();
 
-    TextureData textureData = TextureLoader::CreateCheckerboard(512, 512);
-    TextureCreateInfo textureCI{
-        .width = textureData.width,
-        .height = textureData.height,
-        .depth = textureData.depth,
-        .mipLevels = static_cast<uint16_t>(textureData.mipLevels),
-        .arraySize = 1,
-        .format = textureData.format,
-        .usage = TextureUsage::ShaderResource
-    };
-    std::unique_ptr<Texture> texture(device->CreateTexture(textureCI));
-    device->UploadTextureData(texture.get(), textureData.data.data(),
-                              textureData.data.size() * sizeof(uint8_t));
-    m_defaultTextureHandle = m_texturePool.Add("default", std::move(texture));
+    CreateDefaultTexture();
+    CreateVertexBuffers();
+
+    m__onTransformUpdated = m_eventSystem->Subscribe(Events::TRANSFORM_UPDATED, [this](const EventData &e) {
+        OnTransformUpdated(e);
+    });
 }
 
 ResourceManager::~ResourceManager() {
@@ -47,30 +39,62 @@ bool ResourceManager::IsLoaded(TextureHandle handle) {
     return GetResourceState(handle) == ResourcePoolState::Loaded;
 }
 
-MeshHandle ResourceManager::LoadMesh(const std::string &path) {
+std::vector<MeshHandle> ResourceManager::LoadMesh(const std::string &path, bool loadMaterial) {
     MeshHandle existingHandle = m_meshPool.FindByPath(path);
 
     if (existingHandle.IsValid()) {
         m_meshPool.AddRef(existingHandle);
-        return existingHandle;
+        return {existingHandle};
     }
 
     try {
-        MeshData meshData = MeshLoader::LoadFromFile(path);
-        auto mesh = std::make_unique<Mesh>(m_device, meshData);
-        MeshHandle handle = m_meshPool.Add(path, std::move(mesh));
-        return handle;
+        std::vector<MeshHandle> handles;
+        MeshData meshData = MeshLoader::LoadFromFile(path, loadMaterial);
+        std::vector<MaterialHandle> newMaterials;
+        for (auto &material: meshData.materials) {
+            newMaterials.push_back(LoadMaterial(material));
+        }
+
+        // Build submesh draw command information
+        // Global offset is the offset in the current GPU buffer, local offset is the offset into the new data being loaded into the GPU.
+        // This allows for all mesh data to be uploaded together and using the sum of the global and local offsets.
+        for (auto &submesh: meshData.subMeshes) {
+            auto mesh = std::make_unique<Mesh>(submesh.indexCount, 1, m_currentIndexOffset + submesh.indexOffset,
+                                               m_currentVertexOffset + submesh.vertexOffset, 0, 0,
+                                               newMaterials[submesh.materialIndex]);
+            handles.push_back(m_meshPool.Add(path, std::move(mesh)));
+        }
+
+        // TODO:
+        //      - Manage buffer size to prevent overflow
+        //      - Allow the creation of additional buffers if current buffers are full
+        //      - Memory fragmentation
+        //      - Static buffers that are only fully cleared
+        // Performs a bulk upload of the vertex data of each loaded model
+        m_device->UploadBufferData(m_vPositionBuf.get(), meshData.positions.data(),
+                                   meshData.positions.size() * sizeof(VPosition));
+        m_device->UploadBufferData(m_vNormalBuf.get(), meshData.normals.data(),
+                                   meshData.normals.size() * sizeof(VNormal));
+        m_device->UploadBufferData(m_vTexCoordBuf.get(), meshData.texCoords.data(),
+                                   meshData.texCoords.size() * sizeof(VTexCoord));
+        m_device->UploadBufferData(m_vTangentBuf.get(), meshData.tangents.data(),
+                                   meshData.tangents.size() * sizeof(VTangent));
+
+        m_currentIndexOffset += meshData.indices.size();
+        m_currentVertexOffset += meshData.positions.size();
+
+        return handles;
     } catch (const std::exception &e) {
         printf("Failed to load mesh: ");
         printf(path.c_str());
         printf(" - ");
         printf(e.what());
         printf("\n");
-        return MeshHandle{};
+        return {};
     }
 }
 
-TextureHandle ResourceManager::LoadTexture(const std::string &path) {
+TextureHandle ResourceManager::LoadTexture(const std::string &path, bool forceTexture) {
     TextureHandle existingHandle = m_texturePool.FindByPath(path);
 
     if (existingHandle.IsValid()) {
@@ -100,12 +124,17 @@ TextureHandle ResourceManager::LoadTexture(const std::string &path) {
         printf(" - ");
         printf(e.what());
         printf("\n");
-        return m_defaultTextureHandle;
+        if (forceTexture)
+            return m_defaultTextureHandle;
+        return {};
     }
 }
 
-MaterialHandle ResourceManager::LoadMaterial(const std::string &path) {
-    MaterialHandle existingHandle = m_materialPool.FindByPath(path);
+// Texture Pool needs a flag to specify if it is loaded by a material, in which case they need to not be deleted based on last access time.
+// TODO: Bindless Indices are influenced by defragmentation, how should this be handled?
+// I think holding both Texture Handle & caching the bindless index is the solution, with it being updated when defragmenting...?
+MaterialHandle ResourceManager::LoadMaterial(const MaterialData &mat) {
+    MaterialHandle existingHandle = m_materialPool.FindByPath(mat.name);
 
     if (existingHandle.IsValid()) {
         m_materialPool.AddRef(existingHandle);
@@ -113,8 +142,28 @@ MaterialHandle ResourceManager::LoadMaterial(const std::string &path) {
     }
 
     std::unique_ptr<Material> material = std::make_unique<Material>();
-    material->SetAlbedoTexture(LoadTexture(path));
-    MaterialHandle handle = m_materialPool.Add(path, std::move(material));
+
+    auto albedo = LoadTexture(mat.albedo, true);
+    material->albedoTexture = albedo;
+    material->albedoBindlessIndex = m_texturePool.Get(albedo)->GetBindlessIndex();
+
+    if (!mat.normal.empty()) {
+        auto normal = LoadTexture(mat.normal);
+        material->normalTexture = normal;
+        material->normalBindlessIndex = m_texturePool.Get(normal)->GetBindlessIndex();
+    }
+    if (!mat.metallicRough.empty()) {
+        auto metallicRough = LoadTexture(mat.metallicRough);
+        material->metallicRoughnessTexture = metallicRough;
+        material->metallicRoughnessBindlessIndex = m_texturePool.Get(metallicRough)->GetBindlessIndex();
+    }
+    if (!mat.emissive.empty()) {
+        auto emissive = LoadTexture(mat.emissive);
+        material->emissiveTexture = emissive;
+        material->emissiveBindlessIndex = m_texturePool.Get(emissive)->GetBindlessIndex();
+    }
+
+    MaterialHandle handle = m_materialPool.Add(mat.name, std::move(material));
     return handle;
 }
 
@@ -149,6 +198,12 @@ void ResourceManager::UnloadTexture(TextureHandle handle) {
 }
 
 void ResourceManager::UnloadMaterial(MaterialHandle handle) {
+    auto res = m_materialPool.Get(handle);
+    UnloadTexture(res->albedoTexture);
+    UnloadTexture(res->normalTexture);
+    UnloadTexture(res->emissiveTexture);
+    UnloadTexture(res->emissiveTexture);
+
     m_materialPool.Remove(handle);
 }
 
@@ -212,4 +267,69 @@ void ResourceManager::TrimMemory() {
 }
 
 void ResourceManager::Update() {
+}
+
+void ResourceManager::CreateDefaultTexture() {
+    TextureData textureData = TextureLoader::CreateCheckerboard(512, 512);
+    TextureCreateInfo textureCI{
+        .width = textureData.width,
+        .height = textureData.height,
+        .depth = textureData.depth,
+        .mipLevels = static_cast<uint16_t>(textureData.mipLevels),
+        .arraySize = 1,
+        .format = textureData.format,
+        .usage = TextureUsage::ShaderResource
+    };
+    std::unique_ptr<Texture> texture(m_device->CreateTexture(textureCI));
+    m_device->UploadTextureData(texture.get(), textureData.data.data(),
+                                textureData.data.size() * sizeof(uint8_t));
+    m_defaultTextureHandle = m_texturePool.Add("default", std::move(texture));
+}
+
+//TODO: Separate Vertex&Index creation, support creating multiple vertex buffers when they run out of space
+void ResourceManager::CreateVertexBuffers() {
+    BufferCreateInfo vPositionsBufCI{
+        .size = sizeof(VPosition) * MAX_VERTICES,
+        .stride = sizeof(VPosition),
+        .usage = BufferUsage::Vertex,
+        .memoryType = MemoryType::GPU,
+        .debugName = "Vertex Positions Buffer"
+    };
+    m_vPositionBuf = std::unique_ptr<Buffer>(m_device->CreateBuffer(vPositionsBufCI));
+
+    BufferCreateInfo vNormalsBufCI{
+        .size = sizeof(VNormal) * MAX_VERTICES,
+        .stride = sizeof(VNormal),
+        .usage = BufferUsage::Vertex,
+        .memoryType = MemoryType::GPU,
+        .debugName = "Vertex Normals Buffer"
+    };
+    m_vNormalBuf = std::unique_ptr<Buffer>(m_device->CreateBuffer(vNormalsBufCI));
+
+    BufferCreateInfo vTexCoordsBufCI{
+        .size = sizeof(VTexCoord) * MAX_VERTICES,
+        .stride = sizeof(VTexCoord),
+        .usage = BufferUsage::Vertex,
+        .memoryType = MemoryType::GPU,
+        .debugName = "Vertex TexCoord Buffer"
+    };
+    m_vTexCoordBuf = std::unique_ptr<Buffer>(m_device->CreateBuffer(vTexCoordsBufCI));
+
+    BufferCreateInfo vTangentBufCI{
+        .size = sizeof(VTangent) * MAX_VERTICES,
+        .stride = sizeof(VTangent),
+        .usage = BufferUsage::Vertex,
+        .memoryType = MemoryType::GPU,
+        .debugName = "Vertex Tangent Buffer"
+    };
+    m_vTangentBuf = std::unique_ptr<Buffer>(m_device->CreateBuffer(vTangentBufCI));
+
+    BufferCreateInfo vIndexBufCI{
+        .size = sizeof(VIndex) * MAX_INDICES,
+        .stride = sizeof(VIndex),
+        .usage = BufferUsage::Index,
+        .memoryType = MemoryType::GPU,
+        .debugName = "Index Buffer"
+    };
+    m_vIndexBuf = std::unique_ptr<Buffer>(m_device->CreateBuffer(vIndexBufCI));
 }

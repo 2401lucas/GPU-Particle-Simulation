@@ -35,7 +35,7 @@ public:
     float GetDeltaTime() const { return m_deltaTime; }
     float GetTotalTime() const { return m_totalTime; }
 
-    void RequestExit() { m_window->close(); }
+    void RequestExit() { m_window->Close(); }
 
 private:
     std::unique_ptr<Application> m_application;

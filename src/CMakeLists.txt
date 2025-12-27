@@ -1,6 +1,7 @@
 find_package(glfw3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
 
 if (WIN32)
     add_definitions(-DWIN32_LEAN_AND_MEAN)
@@ -36,6 +37,7 @@ target_link_libraries(GPU_Particle_Sim PRIVATE Microsoft::DirectX-Headers)
 
 target_link_libraries(GPU_Particle_Sim PRIVATE nlohmann_json::nlohmann_json)
 target_link_libraries(GPU_Particle_Sim PUBLIC glfw)
+target_link_libraries(GPU_Particle_Sim PRIVATE assimp::assimp)
 
 #target_compile_definitions(GPU_Particle_Sim PUBLIC DEBUG_RENDERGRAPH)
 target_compile_definitions(GPU_Particle_Sim PUBLIC DEBUG_EVENTS)

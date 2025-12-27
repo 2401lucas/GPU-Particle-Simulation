@@ -30,17 +30,17 @@ public:
 
     // Creation Factory
 
-    virtual CommandQueue *CreateCommandQueue(const CommandQueueCreateInfo &createInfo) = 0;
+    [[nodiscard]] virtual CommandQueue *CreateCommandQueue(const CommandQueueCreateInfo &createInfo) = 0;
 
-    virtual CommandList *CreateCommandList(QueueType) = 0;
+    [[nodiscard]] virtual CommandList *CreateCommandList(QueueType) = 0;
 
-    virtual Swapchain *CreateSwapchain(void *windowHandle, CommandQueue *queue, uint32_t width, uint32_t height) = 0;
+    [[nodiscard]] virtual Swapchain *CreateSwapchain(void *windowHandle, CommandQueue *queue, uint32_t width, uint32_t height) = 0;
 
-    virtual Buffer *CreateBuffer(const BufferCreateInfo &desc) = 0;
+    [[nodiscard]] virtual Buffer *CreateBuffer(const BufferCreateInfo &desc) = 0;
 
-    virtual Texture *CreateTexture(const TextureCreateInfo &desc) = 0;
+    [[nodiscard]] virtual Texture *CreateTexture(const TextureCreateInfo &desc) = 0;
 
-    virtual Pipeline *CreatePipeline(const PipelineCreateInfo &desc) = 0;
+    [[nodiscard]] virtual Pipeline *CreatePipeline(const PipelineCreateInfo &desc) = 0;
 
     // Resource Management
 

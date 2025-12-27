@@ -106,7 +106,7 @@ CommandList *RenderGraph::Execute() {
 
     UpdateStatistics();
 #if defined(DEBUG_RENDERGRAPH)
-    //LogRenderGraph();
+    LogRenderGraph();
 #endif
 
     return commandList;
@@ -357,7 +357,6 @@ void RenderGraph::AliasResources() {
     // Find resources with non-overlapping lifetimes that could share memory
 }
 
-// TODO: Barriers for Buffers?
 void RenderGraph::InsertBarriers(uint32_t passIndex) {
     CommandList *commandList = m_commandLists[m_currentFrameIndex].get();
     const auto &compiled = m_compiledPasses[passIndex];

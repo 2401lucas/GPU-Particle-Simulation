@@ -13,8 +13,6 @@
 #include <string>
 #include <unordered_set>
 
-class Window;
-
 struct WindowConfig {
     int width = 1280;
     int height = 720;
@@ -24,134 +22,117 @@ struct WindowConfig {
     bool vsync = true;
 };
 
+/// Window class represents a GLFW window in the application.
+/// Each window has its own context and can be used independently.
+/// There is a global state that manages the initialization and termination of GLFW globally, only required once.
 class Window {
 public:
-    // --- Global Management ---
+    // --- Global State ---
     static bool InitGLFW();
 
     static void TerminateGLFW();
-
-    static void PollAllEvents();
-
-    static bool HasOpenWindows();
-
-    static const std::unordered_set<Window *> &GetAllWindows();
-
-    static void CloseAll();
 
     // --- Constructors ---
     explicit Window(const WindowConfig &config);
 
     ~Window();
 
-    Window(Window &&other) noexcept;
+    Window(Window &&other) = delete;
 
-    Window &operator=(Window &&other) noexcept;
+    Window &operator=(Window &&other) = delete;
 
     Window(const Window &) = delete;
 
     Window &operator=(const Window &) = delete;
 
     // --- Core API ---
-    void makeContextCurrent() const;
+    void MakeContextCurrent() const;
 
-    static void clearContext();
+    static void ClearContext();
 
-    bool shouldClose() const;
+    bool ShouldClose() const;
 
-    void close();
+    void Close();
 
-    void setTitle(const std::string &title);
+    void SetTitle(const std::string &title);
 
-    void setVSync(bool enabled);
+    void SetVSync(bool enabled);
 
-    bool isVSync() const { return m_VSyncEnabled; }
+    bool IsVSync() const { return m_vSyncEnabled; }
 
-    void setSize(int width, int height);
+    void SetSize(int width, int height);
 
-    void setPosition(int x, int y);
+    void SetPosition(int x, int y);
 
-    void show();
+    void Show();
 
-    void hide();
+    void Hide();
 
-    void focus();
+    void Focus();
 
-    // --- Input ---
-    bool isKeyPressed(int key) const;
-
-    bool isMouseButtonPressed(int button) const;
-
-    void getCursorPosition(double &x, double &y) const;
-
-    void setCursorMode(int mode);
+    void SetCursorMode(int mode);
 
     // --- Event Loop ---
-    void processEvents();
+    void ProcessEvents();
 
     // --- Callbacks ---
-    void setResizeCallback(std::function<void(int, int)> cb) {
-        m_ResizeCallback = std::move(cb);
+    void SetResizeCallback(std::function<void(int, int)> cb) {
+        m_resizeCallback = std::move(cb);
     }
 
-    void setKeyCallback(std::function<void(int, int, int, int)> cb) {
-        m_KeyCallback = std::move(cb);
+    void SetKeyCallback(std::function<void(int, int, int, int)> cb) {
+        m_keyCallback = std::move(cb);
     }
 
-    void setMouseButtonCallback(std::function<void(int, int, int)> cb) {
-        m_MouseButtonCallback = std::move(cb);
+    void SetMouseButtonCallback(std::function<void(int, int, int)> cb) {
+        m_mouseButtonCallback = std::move(cb);
     }
 
-    void setCursorPosCallback(std::function<void(double, double)> cb) {
-        m_CursorPosCallback = std::move(cb);
+    void SetCursorPosCallback(std::function<void(double, double)> cb) {
+        m_cursorPosCallback = std::move(cb);
     }
 
     // --- Getters ---
-    int getWidth() const { return m_Width; }
-    int getHeight() const { return m_Height; }
+    int GetWidth() const { return m_width; }
+    int GetHeight() const { return m_height; }
 
-    float getAspectRatio() const {
-        return m_Height > 0 ? static_cast<float>(m_Width) / m_Height : 0.0f;
+    float GetAspectRatio() const {
+        return m_height > 0 ? static_cast<float>(m_width) / m_height : 0.0f;
     }
 
-    GLFWwindow *getHandle() const { return m_Window; }
-    HWND getHwnd() const { return glfwGetWin32Window(m_Window); }
-    bool wasResized() const { return m_WasResized; }
-    void resetResizeFlag() { m_WasResized = false; }
+    GLFWwindow *GetHandle() const { return m_window; }
+    HWND GetHwnd() const { return glfwGetWin32Window(m_window); }
+    bool WasResized() const { return m_wasResized; }
+    void ResetResizeFlag() { m_wasResized = false; }
 
 private:
-    GLFWwindow *m_Window = nullptr;
-    int m_Width = 0;
-    int m_Height = 0;
-    bool m_WasResized = false;
-    bool m_VSyncEnabled = true;
+    GLFWwindow *m_window = nullptr;
+    int m_width = 0;
+    int m_height = 0;
+    bool m_wasResized = false;
+    bool m_vSyncEnabled = true;
 
-    std::function<void(int, int)> m_ResizeCallback;
-    std::function<void(int, int, int, int)> m_KeyCallback;
-    std::function<void(int, int, int)> m_MouseButtonCallback;
-    std::function<void(double, double)> m_CursorPosCallback;
+    std::function<void(int, int)> m_resizeCallback;
+    std::function<void(int, int, int, int)> m_keyCallback;
+    std::function<void(int, int, int)> m_mouseButtonCallback;
+    std::function<void(double, double)> m_cursorPosCallback;
 
-    void cleanup();
-
-    // --- Static State ---
-    static std::unordered_set<Window *> &GetWindowRegistry();
-
-    static std::mutex &GetRegistryMutex();
+    void Cleanup();
 
     static bool &GetGLFWInitFlag();
 
     // --- Static Callbacks ---
-    static void errorCallback(int errorCode, const char *description);
+    static void ErrorCallback(int errorCode, const char *description);
 
-    static void framebufferResizeCallback(GLFWwindow *, int, int);
+    static void FramebufferResizeCallback(GLFWwindow *, int, int);
 
-    static void keyCallback(GLFWwindow *, int, int, int, int);
+    static void KeyCallback(GLFWwindow *, int, int, int, int);
 
-    static void mouseButtonCallback(GLFWwindow *, int, int, int);
+    static void MouseButtonCallback(GLFWwindow *, int, int, int);
 
-    static void cursorPosCallback(GLFWwindow *, double, double);
+    static void CursorPosCallback(GLFWwindow *, double, double);
 
-    static Window *getWindowInstance(GLFWwindow *);
+    static Window *GetWindowInstance(GLFWwindow *);
 };
 
 #endif
