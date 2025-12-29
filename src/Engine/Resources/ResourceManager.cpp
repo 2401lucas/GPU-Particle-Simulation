@@ -11,12 +11,8 @@ ResourceManager::ResourceManager(Device *device, EventSystem *eventSystem) : m_d
                                                                              m_gpuMemoryUsed(0) {
     m_gpuMemorySize = device->GetVideoMemoryBudget();
 
-    CreateDefaultTexture();
+    CreateDefaults();
     CreateVertexBuffers();
-
-    m__onTransformUpdated = m_eventSystem->Subscribe(Events::TRANSFORM_UPDATED, [this](const EventData &e) {
-        OnTransformUpdated(e);
-    });
 }
 
 ResourceManager::~ResourceManager() {
@@ -269,7 +265,7 @@ void ResourceManager::TrimMemory() {
 void ResourceManager::Update() {
 }
 
-void ResourceManager::CreateDefaultTexture() {
+void ResourceManager::CreateDefaults() {
     TextureData textureData = TextureLoader::CreateCheckerboard(512, 512);
     TextureCreateInfo textureCI{
         .width = textureData.width,
@@ -284,6 +280,12 @@ void ResourceManager::CreateDefaultTexture() {
     m_device->UploadTextureData(texture.get(), textureData.data.data(),
                                 textureData.data.size() * sizeof(uint8_t));
     m_defaultTextureHandle = m_texturePool.Add("default", std::move(texture));
+
+
+    std::unique_ptr<Material> material = std::make_unique<Material>();
+    material->albedoTexture = m_defaultTextureHandle;
+    material->albedoBindlessIndex = m_texturePool.Get(m_defaultTextureHandle)->GetBindlessIndex();
+    m_defaultMaterialHandle = m_materialPool.Add("default", std::move(material));
 }
 
 //TODO: Separate Vertex&Index creation, support creating multiple vertex buffers when they run out of space

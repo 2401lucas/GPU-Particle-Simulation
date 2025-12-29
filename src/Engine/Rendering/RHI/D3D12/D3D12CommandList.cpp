@@ -125,7 +125,7 @@ void D3D12CommandList::SetVertexBuffer(Buffer *buffer, uint32_t slot) {
     m_cmdList->IASetVertexBuffers(slot, 1, &vbv);
 }
 
-void D3D12CommandList::SetVertexBuffers(Buffer *buffer, uint32_t slot) {
+void D3D12CommandList::SetVertexBuffers(std::vector<Buffer *> buffer, std::vector<uint32_t> slot) {
 }
 
 void D3D12CommandList::SetIndexBuffer(Buffer *buffer) {
@@ -190,9 +190,10 @@ void D3D12CommandList::DrawInstanced(uint32_t vertexCount, uint32_t instanceCoun
     m_cmdList->DrawInstanced(vertexCount, instanceCount, 0, 0);
 }
 
-void D3D12CommandList::DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount) {
+void D3D12CommandList::DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount,
+                                            uint32_t startInstance, int32_t vertexOffset) {
     if (!m_isRecording) return;
-    m_cmdList->DrawIndexedInstanced(indexCount, instanceCount, startIndex, 0, 0);
+    m_cmdList->DrawIndexedInstanced(indexCount, instanceCount, startIndex, vertexOffset, startInstance);
 }
 
 void D3D12CommandList::Dispatch(uint32_t groupsX, uint32_t groupsY, uint32_t groupsZ) {

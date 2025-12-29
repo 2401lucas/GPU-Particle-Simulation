@@ -44,6 +44,8 @@ A modern DX12/Vulkan modern Renderer leveraging a GPU first approach to maximize
 * Fix Input
 * UI (custom RHI backend?)
 * Vulkan RHI backend
+* Implement sorting and batching logic on GPU
+* Update Frame buffers & collect data from application
 
 ### TODO (Backlog)
 

@@ -20,15 +20,17 @@ void ParticleApp::OnInitialize(Engine &engine) {
     demoCubeR = scene.CreateEntity();
     scene.AddMesh(demoCubeR, meshes[0]);
     scene.AddMaterial(demoCubeR, materialHandle);
-    auto rm = scene.AddTransform(demoCubeR, {3, 0, 3});
-    auto& t = scene.GetTransformSystem();
-    auto&pos = t.positions[rm];
+    scene.AddTransform(demoCubeR, {3, 0, 3});
+    // Transform test
+    // auto rm = scene.AddTransform(demoCubeR, {3, 0, 3});
+    // auto& t = scene.GetTransformSystem();
+    // auto&pos = t.positions[rm];
 
     auto &renderer = engine.GetRenderer();
     m_camera = std::make_unique<Camera>(Transform({0, 0, 5}, {0, 0, 0}, {1, 1, 1}), (1280.f / 720.f), 60, 0.0001f,
                                         500.0f);
 
-    renderer.SetCamera(*m_camera);
+    renderer.SetCamera(m_camera.get());
 
     auto &input = engine.GetInput();
     input.RegisterAxis("Y Axis", KeyboardBinding(GLFW_KEY_W), KeyboardBinding(GLFW_KEY_S));
@@ -64,10 +66,13 @@ void ParticleApp::Update(Engine &engine, float deltaTime) {
 
 void ParticleApp::OnRender(Engine &engine) {
     scene.Update();
-    ;
+
     auto &renderer = engine.GetRenderer();
     renderer.BeginFrame();
     renderer.SetTransforms(scene.GetTransformSystem().worldMatrices);
+
+    std::vector<RenderInfo> renderInfos;
+    renderInfos.reserve(scene.GetEntityCount());
 
     scene.ForEachRenderable([&](EntityHandle entity, MeshHandle mesh,
                                 MaterialHandle mat, TransformHandle transform) {
@@ -75,11 +80,12 @@ void ParticleApp::OnRender(Engine &engine) {
             .mesh = mesh,
             .material = mat,
             .transform = transform,
-            .castsShadows = true
+            .castsShadows = true,
+            .receiveShadows = true,
         };
-        renderer.Submit(info);
+        renderInfos.push_back(info);
     });
-
+    renderer.Submit(renderInfos);
     renderer.EndFrame();
 }
 
@@ -89,6 +95,7 @@ void ParticleApp::OnShutdown(Engine &engine) {
 }
 
 void ParticleApp::OnResize(Engine &engine, int width, int height) {
+    m_camera->SetAspectRatio(static_cast<float>(width) / height);
 }
 
 void ParticleApp::OnFocusChanged(Engine &engine, bool hasFocus) {

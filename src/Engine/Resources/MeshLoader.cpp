@@ -48,13 +48,13 @@ MeshData MeshLoader::LoadFromFile(const std::string &path,
     newMesh.texCoords.resize(vertexCount);
     newMesh.indices.reserve(facesCount * 3);
 
+    uint32_t localIndexOffset = 0;
+    uint32_t localVertexOffset = 0;
     for (uint32_t meshIdx = 0; meshIdx < scene->mNumMeshes; ++meshIdx) {
         auto &mesh = scene->mMeshes[meshIdx];
 
         SubMesh newSubmesh{};
         newSubmesh.materialIndex = mesh->mMaterialIndex;
-        uint32_t localIndexOffset = newMesh.indices.size();
-        uint32_t localVertexOffset = newMesh.positions.size();
         newSubmesh.indexOffset = localIndexOffset;
         newSubmesh.vertexOffset = localVertexOffset;
 
@@ -79,6 +79,10 @@ MeshData MeshLoader::LoadFromFile(const std::string &path,
             }
             newSubmesh.indexCount = newMesh.indices.size() - localIndexOffset;
         }
+
+        newMesh.subMeshes.push_back(newSubmesh);
+        localVertexOffset += mesh->mNumVertices;
+        localIndexOffset += mesh->mNumFaces * 3;
     }
 
     if (!loadMaterial) return newMesh;

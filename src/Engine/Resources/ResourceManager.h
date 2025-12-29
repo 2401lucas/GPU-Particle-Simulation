@@ -344,8 +344,6 @@ private:
     Device *m_device;
     EventSystem *m_eventSystem;
 
-    EventHandle m__onTransformUpdated;
-
     // Resource Pools
     ResourcePool<Mesh, MeshHandle> m_meshPool;
     ResourcePool<Texture, TextureHandle> m_texturePool;
@@ -353,6 +351,7 @@ private:
     ResourcePool<Pipeline, PipelineHandle> m_pipelinePool;
 
     TextureHandle m_defaultTextureHandle;
+    MaterialHandle m_defaultMaterialHandle;
 
     uint32_t m_currentVertexOffset = 0;
     uint32_t m_currentIndexOffset = 0;
@@ -371,7 +370,7 @@ private:
     uint64_t m_gpuMemorySize = 0;
     uint64_t m_gpuMemoryUsed = 0;
 
-    void CreateDefaultTexture();
+    void CreateDefaults();
 
     void CreateVertexBuffers();
 };

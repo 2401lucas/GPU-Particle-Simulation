@@ -158,8 +158,6 @@ namespace Events {
     constexpr const char *ENTITY_SPAWNED = "entity_spawned";
     constexpr const char *ENTITY_DESTROYED = "entity_destroyed";
     constexpr const char *COLLISION_OCCURRED = "collision_occurred";
-
-    constexpr const char *TRANSFORM_UPDATED = "transform_updated";
 }
 
 #endif //GPU_PARTICLE_SIM_EVENTSYSTEM_H

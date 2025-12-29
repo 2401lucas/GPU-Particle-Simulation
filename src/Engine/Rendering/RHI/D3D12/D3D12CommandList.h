@@ -24,7 +24,7 @@ public:
 
 
     void SetVertexBuffer(Buffer *buffer, uint32_t slot) override;
-    void SetVertexBuffers(Buffer *buffer, uint32_t slot) override;
+    void SetVertexBuffers(std::vector<Buffer *>buffer, std::vector<uint32_t> slot) override;
     void SetIndexBuffer(Buffer *buffer) override;
     void SetConstantBuffer(Buffer *buffer, uint32_t slot, uint32_t offset) override;
     void SetTexture(Texture *texture, uint32_t slot) override;
@@ -32,7 +32,7 @@ public:
     void Draw(uint32_t vertexCount, uint32_t startVertex) override;
     void DrawIndexed(uint32_t indexCount, uint32_t startIndex) override;
     void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount) override;
-    void DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount, uint32_t startInstance) override;
+    void DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount, uint32_t startInstance, int32_t vertexOffset) override;
     void Dispatch(uint32_t groupsX, uint32_t groupsY, uint32_t groupsZ) override;
 
     void ClearRenderTarget(Texture *texture, const float color[4]) override;

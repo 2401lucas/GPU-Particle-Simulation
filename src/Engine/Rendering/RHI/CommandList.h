@@ -27,7 +27,7 @@ class CommandList {
 public:
     virtual ~CommandList() = default;
 
-    virtual void Begin() = 0;
+    virtual void Begin(BindlessDescriptorManager*) = 0;
 
     virtual void End() = 0;
 
@@ -59,9 +59,9 @@ public:
     virtual void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount) = 0;
 
     virtual void DrawIndexedInstanced(uint32_t indexCount, uint32_t startIndex, uint32_t instanceCount,
-                                      uint32_t startInstance) = 0;
+                                      uint32_t startInstance, int32_t vertexOffset) = 0;
 
-    virtual void DrawDCGBuffer(Buffer*);
+    // virtual void DrawDCGBuffer(Buffer*);
 
     // Compute
 

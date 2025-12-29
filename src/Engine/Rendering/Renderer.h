@@ -6,12 +6,13 @@
 #define GPU_PARTICLE_SIM_RENDERER_H
 #define MAX_OBJECTS_PER_FRAME 256
 
-#include "../Resources/ResourceHandle.h"
 #include <memory>
 #include <vector>
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+#include "Resources/ResourceHandle.h"
 #include "Resources/ResourceManager.h"
 
 #include "Core/Transform.h"
@@ -25,7 +26,6 @@
 #include "RHI/CommandQueue.h"
 #include "RHI/Pipeline.h"
 
-//
 struct alignas(256) PerFrameData {
     glm::mat4 viewProjection;
     glm::mat4 view;
@@ -48,7 +48,7 @@ static_assert(sizeof(PerFrameData) == 256);
 struct alignas(16) GPUInstance {
     uint32_t meshID;
     uint32_t materialID;
-    uint32_t transformID;
+    int32_t transformID;
     uint32_t padding;
 };
 
@@ -57,10 +57,11 @@ static_assert(sizeof(GPUInstance) == 16);
 // Vert/Frag/Compute
 struct alignas(64) GPUTransform {
     glm::mat4 worldMatrix;
-    // glm::mat4 normalMatrix; Test if Bandwidth constrained or Compute Costrained
+    // glm::mat4 normalMatrix; // Test if Bandwidth constrained or Compute Costrained
 };
 
 static_assert(sizeof(GPUTransform) == 64);
+
 // Vert/Frag/Compute
 struct alignas(32) GPUMeshData {
     uint32_t indexCount;
@@ -75,6 +76,7 @@ struct alignas(32) GPUMeshData {
 };
 
 static_assert(sizeof(GPUMeshData) == 32);
+
 // Vert/Frag/Compute
 struct alignas(32) GPUMaterial {
     uint32_t materialFlags; // Use to specify material types
@@ -98,7 +100,7 @@ struct RenderInfo {
 
     // Rendering flags
     bool castsShadows = true;
-    bool receivesShadows = true;
+    bool receiveShadows = true;
     bool isTransparent = false;
 
     // For sorting
@@ -111,6 +113,7 @@ struct RenderInfo {
 /// </summary>
 struct RenderBatch {
     uint32_t instanceID;
+    uint32_t instanceCount = 0;
     bool castsShadows = true;
 };
 
@@ -145,7 +148,7 @@ public:
     /// <summary>
     /// Set the active camera for this frame
     /// </summary>
-    void SetCamera(Camera &camera);
+    void SetCamera(Camera *camera);
 
     /// <summary>
     /// Set directional light
@@ -176,6 +179,7 @@ private:
     Window *m_window;
     ResourceManager *m_resourceManager;
     Device *m_device;
+    Camera *m_camera;
 
     // Core Resources
     struct FrameResources {
@@ -213,6 +217,11 @@ private:
     // Submission Data
     std::vector<RenderInfo> m_submissions;
     std::vector<RenderBatch> m_batches;
+
+    std::vector<glm::mat4> m_transforms;
+    std::vector<GPUMaterial> m_materials;
+    std::vector<GPUMeshData> m_meshData;
+    std::vector<GPUInstance> m_instances;
 
     // Configuration
     bool m_shadowsEnabled = false;

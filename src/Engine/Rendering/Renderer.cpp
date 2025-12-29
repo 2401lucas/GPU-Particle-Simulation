@@ -2,13 +2,9 @@
 // Created by 2401Lucas on 2025-10-30.
 //
 #include "Renderer.h"
-#include "RenderGraph/RenderGraph.h"
 #include "RenderGraph/RenderPass.h"
-#include "RHI/Device.h"
-#include "../OS/Window/Window.h"
 #include <algorithm>
 #include <stdexcept>
-#include <chrono>
 
 Renderer::Renderer(Window *window, Device *device, ResourceManager *resourceManager)
     : m_window(window), m_device(device), m_resourceManager(resourceManager)
@@ -93,44 +89,43 @@ void Renderer::CreateFrameResources() {
             .size = sizeof(PerFrameData),
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "generalBuffer_" + std::to_string(i),
+            .debugName = "generalBuffer_",
         };
         m_frameResources[i].generalBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(perFrameBufferCI));
 
         BufferCreateInfo transformBufferCI = {
             .size = sizeof(GPUTransform) * MAX_OBJECTS_PER_FRAME,
-            // Support up to 256 objects per frame (limited by uniform max size of 65536 bytes)
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "transformBuffer_" + std::to_string(i),
+            .debugName = "transformBuffer",
         };
         m_frameResources[i].transformBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(transformBufferCI));
 
         BufferCreateInfo meshDataBufferCI = {
-            .size = sizeof(MeshData) * MAX_OBJECTS_PER_FRAME,
+            .size = sizeof(GPUMeshData) * MAX_OBJECTS_PER_FRAME,
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "meshDataBuffer_" + std::to_string(i),
+            .debugName = "meshDataBuffer_",
         };
         m_frameResources[i].meshDataBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(meshDataBufferCI));
 
         BufferCreateInfo materialBufferCI = {
-            .size = sizeof(Material) * MAX_OBJECTS_PER_FRAME,
+            .size = sizeof(GPUMaterial) * MAX_OBJECTS_PER_FRAME,
             .usage = BufferUsage::Uniform,
             .memoryType = MemoryType::Upload,
-            .debugName = "materialBuffer_" + std::to_string(i),
+            .debugName = "materialBuffer_",
         };
         m_frameResources[i].materialBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(materialBufferCI));
 
         BufferCreateInfo instanceBuffer = {
-          .size = sizeof(InstanceData) * MAX_OBJECTS_PER_FRAME,
-          .usage = BufferUsage::Uniform,
-          .memoryType = MemoryType::Upload,
-          .debugName = "instanceBuffer_" + std::to_string(i),
+            .size = sizeof(GPUInstance) * MAX_OBJECTS_PER_FRAME,
+            .usage = BufferUsage::Uniform,
+            .memoryType = MemoryType::Upload,
+            .debugName = "instanceBuffer_",
         };
         m_frameResources[i].instanceBuffer = std::unique_ptr<Buffer>(
             m_device->CreateBuffer(instanceBuffer));
@@ -177,8 +172,8 @@ void Renderer::EndFrame() {
     }
 
     // Update per-frame data before building render graph
-    UpdatePerFrameData();
     ProcessSubmissions();
+    UpdatePerFrameData();
     BuildRenderGraph();
     CommandList *commandList = m_renderGraph->Execute();
 
@@ -196,7 +191,7 @@ void Renderer::EndFrame() {
 }
 
 void Renderer::SetTransforms(const std::vector<glm::mat4> &transforms) {
-
+    m_transforms = transforms;
 }
 
 void Renderer::Submit(const RenderInfo &info) {
@@ -204,102 +199,89 @@ void Renderer::Submit(const RenderInfo &info) {
 }
 
 void Renderer::Submit(const std::vector<RenderInfo> &infos) {
+    m_submissions.reserve(m_submissions.size() + infos.size());
     m_submissions.insert(m_submissions.end(), infos.begin(), infos.end());
 }
 
-void Renderer::SetCamera(Camera &camera) {
-    m_camera = &camera;
+void Renderer::SetCamera(Camera *camera) {
+    m_camera = camera;
 }
 
 void Renderer::SetDirectionalLight(const glm::vec3 &direction, const glm::vec3 &color, float intensity) {
-    m_directionalLight.direction = glm::normalize(direction);
-    m_directionalLight.color = color;
-    m_directionalLight.intensity = intensity;
 }
 
 void Renderer::Resize() {
     WaitForGPU();
-    m_renderGraph->Flush();
+    m_renderGraph->Flush(); // Flush current render graph resources as they are outdated
     m_width = m_window->GetWidth();
     m_height = m_window->GetHeight();
-    m_camera->SetAspectRatio(m_window->GetAspectRatio());
     m_swapchain->Resize(m_width, m_height);
 }
 
 void Renderer::UpdatePerFrameData() {
     if (!m_camera) return;
 
-    PerFrameData frameData = {};
-    frameData.viewProjection = m_camera->GetPerspective() * m_camera->GetViewMatrix();
-    frameData.cameraPosition = m_camera->GetTransform().GetPosition();
-    frameData.time = m_totalTime;
-    frameData.lightDirection = m_directionalLight.direction;
-    frameData.lightIntensity = m_directionalLight.intensity;
-    frameData.lightColor = m_directionalLight.color;
-    frameData.frameIndex = m_frameIndex;
-
     auto &frameResources = GetCurrentFrameResources();
-    void *mappedData = frameResources.generalBuffer->GetMappedPtr();
-    if (mappedData) {
-        memcpy(mappedData, &frameData, sizeof(PerFrameData));
+
+    {
+        PerFrameData frameData = {};
+        frameData.viewProjection = m_camera->GetPerspective() * m_camera->GetViewMatrix();
+        frameData.view = m_camera->GetViewMatrix();
+        frameData.projection = m_camera->GetPerspective();
+        frameData.cameraPosition = m_camera->GetTransform().GetPosition();
+
+        frameData.time = m_totalTime;
+
+        frameData.frameIndex = m_frameIndex;
+        frameData.nearPlane = 0.1;
+        frameData.farPlane = 1000.0;
+
+        void *mappedData = frameResources.generalBuffer->GetMappedPtr();
+        if (mappedData) {
+            memcpy(mappedData, &frameData, sizeof(PerFrameData));
+        }
+    }
+    {
+        void *mappedData = frameResources.transformBuffer->GetMappedPtr();
+        if (mappedData) {
+            memcpy(mappedData, m_transforms.data(), sizeof(GPUTransform) * m_transforms.size());
+        }
     }
 
+    {
+        // void *mappedData = frameResources.meshDataBuffer->GetMappedPtr();
+        // if (mappedData) {
+        //     memcpy(mappedData, m_meshData.data(), sizeof(GPUMeshData) * m_meshData.size());
+        // }
+    }
 
+    {
+        void *mappedData = frameResources.materialBuffer->GetMappedPtr();
+        if (mappedData) {
+            memcpy(mappedData, m_materials.data(), sizeof(GPUMaterial) * m_materials.size());
+        }
+    }
 
+    {
+        // Instance Buffer
+        // Filled by compute shader?
+        // We sort commands on CPU already..., maybe just use that data for now
+        void *mappedData = frameResources.instanceBuffer->GetMappedPtr();
+        if (mappedData) {
+            memcpy(mappedData, &m_instances, sizeof(GPUInstance) * m_instances.size());
+        }
+    }
 }
 
-// Per object data is limited to 256 models because it is maxing out the size limit of 65536 bytes in a uniform buffer.
-// This is because the object data is sending too much information. If I could only pass 1 index to access this information in a global storage buffer,
-// this would increase the maximum number of models to 16384
-// TODO: Implement solution based on above observation
-void Renderer::UpdatePerObjectData(Transform &transform, Material *material, uint32_t objectID) {
-    PerObjectData objectData = {};
-    objectData.worldMatrix = transform.GetTransformMat();
-
-    // Calculate normal matrix (inverse transpose of world matrix's 3x3 part)
-    glm::mat3 normalMatrix3 = glm::transpose(glm::inverse(glm::mat3(objectData.worldMatrix)));
-    objectData.normalMatrix = glm::mat4(normalMatrix3);
-
-    // Get bindless texture indices from material
-    if (material) {
-        // Bindless indices are cached when material textures are set
-        objectData.albedoTextureIndex = material->albedoBindlessIndex;
-        objectData.normalTextureIndex = material->normalBindlessIndex;
-        objectData.metallicRoughnessIndex = material->metallicRoughnessBindlessIndex;
-        objectData.emissiveTextureIndex = material->emissiveBindlessIndex;
-
-        // Material factors
-        auto &properties = material->properties;
-        objectData.albedoFactor = glm::vec4(properties.baseColor[0]);
-        objectData.metallicFactor = 0;
-        objectData.roughnessFactor = 0;
-    } else {
-        // Use default texture
-        Texture *defaultTex = m_resourceManager->GetTexture(m_defaultTexture);
-        objectData.albedoTextureIndex = defaultTex ? defaultTex->GetBindlessIndex() : 0;
-        objectData.normalTextureIndex = 0;
-        objectData.metallicRoughnessIndex = 0;
-        objectData.emissiveTextureIndex = 0;
-        objectData.albedoFactor = glm::vec4(1.0f);
-        objectData.metallicFactor = 0.5f;
-        objectData.roughnessFactor = 0.5f;
-    }
-
-    objectData.objectID = objectID;
-
-    // Upload to current frame's per-object buffer
-    auto &frameResources = GetCurrentFrameResources();
-    char *mappedData = (char *) frameResources.perObjectBuffer->GetMappedPtr();
-    if (mappedData) {
-        memcpy(mappedData + objectID * sizeof(PerObjectData), &objectData, sizeof(PerObjectData));
-    }
+void Renderer::UpdatePerDrawGroupData() {
+    throw std::runtime_error("Not implemented");
 }
 
 void Renderer::ProcessSubmissions() {
     if (m_submissions.empty()) {
         return;
     }
-
+    // TODO: Implement sorting and batching logic on GPU
     CalculateSortKeys();
     SortSubmissions();
     BatchSubmissions();
@@ -311,23 +293,25 @@ void Renderer::CalculateSortKeys() {
     glm::vec3 cameraPos = m_camera->GetTransform().GetPosition();
 
     for (auto &submission: m_submissions) {
-        // Calculate distance to camera
-        glm::vec3 objectPos = submission.transform.GetPosition();
-        float distance = glm::length(objectPos - cameraPos);
+        float distance = 0; //TODO
         submission.distanceToCamera = distance;
 
-        // TODO: Create material ID's for sorting
-        // Create sort key (material ID << 16 | depth)
-        uint32_t materialID = 0; //submission.material ? /*submission.material->GetID()*/0 : 0;
-        uint16_t depthKey = static_cast<uint16_t>(glm::clamp(distance * 10.0f, 0.0f, 65535.0f));
+        constexpr uint32_t TRANSPARENT_BIT = 1u << 31;
+        constexpr uint32_t MATERIAL_MASK = 0x7FFFu; // 15 bits
+        constexpr uint32_t DEPTH_MASK = 0xFFFFu; // 16 bits
 
-        if (submission.isTransparent) {
-            // Transparent objects sort back-to-front
-            submission.sortKey = (1u << 31) | (materialID << 16) | (0xFFFF - depthKey);
-        } else {
-            // Opaque objects sort front-to-back
-            submission.sortKey = (0u << 31) | (materialID << 16) | depthKey;
-        }
+        const uint32_t materialID =
+                submission.material.id & MATERIAL_MASK; // 0 = default material
+
+        const uint16_t depthKey = static_cast<uint16_t>(
+            glm::clamp(distance * 10.0f, 0.0f, static_cast<float>(DEPTH_MASK))
+        );
+
+        // Opaque objects sort front to back & transparent objects sort back to front
+        submission.sortKey =
+                (submission.isTransparent ? TRANSPARENT_BIT : 0u) |
+                (materialID << 16) |
+                (submission.isTransparent ? (DEPTH_MASK - depthKey) : depthKey);
     }
 }
 
@@ -348,11 +332,37 @@ void Renderer::BatchSubmissions() {
 
     for (size_t i = 0; i < m_submissions.size(); i++) {
         const auto &submission = m_submissions[i];
-        auto currentBatch = RenderBatch{};
-        currentBatch.mesh = m_resourceManager->GetMesh(submission.mesh);
-        currentBatch.material = m_resourceManager->GetMaterial(submission.material);
-        currentBatch.castsShadows = submission.castsShadows;
-        currentBatch.transforms.push_back(submission.transform);
+
+        auto mesh = m_resourceManager->GetMesh(submission.mesh);
+        uint32_t meshID = m_meshData.size();
+        m_meshData.push_back({
+            .indexCount = mesh->firstIndex,
+            .firstIndex = mesh->firstIndex,
+            .vertexOffset = mesh->vertexOffset,
+        });
+
+        auto material = m_resourceManager->GetMaterial(submission.material);
+        uint32_t materialID = m_materials.size();
+        m_materials.push_back({
+            .materialFlags = 0,
+            .albedoTextureIndex = material->albedoBindlessIndex,
+            .normalTextureIndex = material->normalBindlessIndex,
+            .metallicRoughnessIndex = material->metallicRoughnessBindlessIndex,
+            .emissiveTextureIndex = material->emissiveBindlessIndex,
+        });
+
+        uint32_t instanceID = m_instances.size();
+        m_instances.push_back({
+            .meshID = meshID,
+            .materialID = materialID,
+            .transformID = submission.transform,
+        });
+
+        auto currentBatch = RenderBatch{
+            .instanceID = instanceID,
+            .instanceCount = 1,
+            .castsShadows = true,
+        };
         m_batches.push_back(currentBatch);
     }
 
@@ -361,7 +371,7 @@ void Renderer::BatchSubmissions() {
 
     uint32_t totalInstances = 0;
     for (const auto &batch: m_batches) {
-        totalInstances += static_cast<uint32_t>(batch.transforms.size());
+        totalInstances += batch.instanceCount;
     }
     m_statistics.instanceCount = totalInstances;
 }
@@ -425,7 +435,7 @@ void Renderer::RenderShadows(RenderPassContext &ctx) {
     for (const auto &batch: m_batches) {
         if (!batch.castsShadows) continue;
 
-        if (batch.transforms.size() == 1) {
+        if (batch.instanceCount == 1) {
             // Single draw
         } else {
             // Instanced draw
@@ -435,7 +445,7 @@ void Renderer::RenderShadows(RenderPassContext &ctx) {
 
 void Renderer::RenderMain(RenderPassContext &ctx) {
     // Clear
-    const float clearColor[4] = {0.1f, 0.1f, 0.15f, 1.0f};
+    constexpr float clearColor[4] = {0.1f, 0.1f, 0.15f, 1.0f};
     // auto renderTarget = ctx.GetTexture("Backbuffer");
     // auto depthTarget = ctx.GetTexture("SceneDepth");
     // Todo: Implement GetTexture in RenderPassContext
@@ -469,9 +479,13 @@ void Renderer::RenderMain(RenderPassContext &ctx) {
     ctx.commandList->SetPipeline(m_mainPipeline.get());
     ctx.commandList->SetPrimitiveTopology(PrimitiveTopology::TriangleList);
 
-    // Bind per-frame data (root parameter 4)
+    // Bind per-frame data (root parameter 4-8)
     auto &frameResources = GetCurrentFrameResources();
     ctx.commandList->SetConstantBuffer(frameResources.generalBuffer.get(), 4, 0);
+    // ctx.commandList->SetConstantBuffer(frameResources.transformBuffer.get(), 5, 0);
+    // ctx.commandList->SetConstantBuffer(frameResources.meshDataBuffer.get(), 6, 0);
+    // ctx.commandList->SetConstantBuffer(frameResources.materialBuffer.get(), 7, 0);
+    // ctx.commandList->SetConstantBuffer(frameResources.instanceBuffer.get(), 8, 0);
 
     // Set vertex and index buffers
     auto buffers = m_resourceManager->GetRenderBuffers();
@@ -481,9 +495,9 @@ void Renderer::RenderMain(RenderPassContext &ctx) {
 
     // Render all batches
     for (auto &batch: m_batches) {
-        if (!batch.mesh) continue;
-        ctx.commandList->DrawIndexedInstanced(batch.mesh->indexCount, batch.mesh->firstIndex,
-                                                         batch.mesh->instanceCount, batch.mesh->firstInstance);
+        auto mesh = m_meshData[m_instances[batch.instanceID].meshID];
+        ctx.commandList->DrawIndexedInstanced(mesh.indexCount, mesh.firstIndex,
+                                              1, batch.instanceID, mesh.vertexOffset);
     }
 }
 
